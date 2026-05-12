@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>拿破崙與秘書｜Firebase 多人對戰</title>
+  <meta name="description" content="台式拿破崙與秘書 Firebase 多人房間版，可部署到 GitHub Pages。" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Taiwan Napoleon & Secretary</p>
+        <h1>拿破崙與秘書</h1>
+        <p class="subtitle">Firebase 多人房間・5 人對戰・不足可由電腦補位</p>
+      </div>
+      <div class="top-actions">
+        <button id="btnRules" class="ghost">玩法摘要</button>
+        <button id="btnLeave" class="ghost hidden">離開房間</button>
+      </div>
+    </header>
+
+    <section id="connectView" class="card shell-card">
+      <div class="hero">
+        <div>
+          <span class="pill">GitHub Pages Ready</span>
+          <h2>連線 Firebase，建立多人房間</h2>
+          <p>第一次部署前，請建立 Firebase 專案、啟用匿名登入與 Realtime Database，然後把 Web App 設定貼到下方。設定會存在本機瀏覽器，不會送到其他地方。</p>
+        </div>
+        <div class="wave">♠ ♥ ♦ ♣</div>
+      </div>
+
+      <div class="grid two">
+        <label class="field">
+          <span>你的暱稱</span>
+          <input id="playerName" maxlength="12" placeholder="例如：Fox" />
+        </label>
+        <label class="field">
+          <span>房號</span>
+          <input id="roomCode" maxlength="8" placeholder="留空可建立新房" />
+        </label>
+      </div>
+
+      <label class="field">
+        <span>Firebase Web App 設定 JSON</span>
+        <textarea id="firebaseConfig" rows="8" spellcheck="false" placeholder='{"apiKey":"...","authDomain":"...","databaseURL":"https://...firebasedatabase.app","projectId":"...","appId":"..."}'></textarea>
+        <small>可從 Firebase Console → Project settings → Your apps 複製。Realtime Database 必須包含 <code>databaseURL</code>。</small>
+      </label>
+
+      <div class="button-row">
+        <button id="btnConnect" class="primary">連線 Firebase</button>
+        <button id="btnCreateRoom" class="primary" disabled>建立新房</button>
+        <button id="btnJoinRoom" class="ghost" disabled>加入房間</button>
+      </div>
+      <p id="connectStatus" class="hint">尚未連線。</p>
+    </section>
+
+    <section id="lobbyView" class="card hidden">
+      <div class="lobby-header">
+        <div>
+          <p class="eyebrow">房間</p>
+          <h2 id="lobbyRoomCode">----</h2>
+          <p id="lobbyShare" class="hint"></p>
+        </div>
+        <button id="btnCopyLink" class="ghost">複製邀請連結</button>
+      </div>
+
+      <div class="grid lobby-grid">
+        <div class="panel">
+          <h3>座位</h3>
+          <div id="lobbySeats" class="seat-list"></div>
+          <div class="button-row host-only hidden">
+            <button id="btnAddBot" class="ghost">補一位電腦</button>
+            <button id="btnRemoveBot" class="ghost">移除電腦</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>規則設定</h3>
+          <div class="settings-grid">
+            <label class="field">
+              <span>電腦難度 <b id="difficultyLabel">10</b> / 20</span>
+              <input id="difficulty" type="range" min="1" max="20" value="10" />
+              <small>難度越高，電腦越會估牌、保頭、餵隊友。</small>
+            </label>
+            <label class="field">
+              <span>底牌頭處理</span>
+              <select id="buriedMode">
+                <option value="addContract" selected>公開棄頭，張數加到成約</option>
+                <option value="defenders">棄頭結算視為防家取得</option>
+                <option value="ignore">只顯示，不調整成約</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>首攻規則</span>
+              <select id="leadMode">
+                <option value="next" selected>拿破崙下家首攻</option>
+                <option value="napoleon">拿破崙首攻</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>王牌選項</span>
+              <select id="trumpMode">
+                <option value="suitOnly" selected>四花色王牌</option>
+                <option value="allowNoTrump">允許無王</option>
+              </select>
+            </label>
+            <label class="check"><input id="jokerLowLast3" type="checkbox" checked /> 末三輪鬼牌變小</label>
+            <label class="check"><input id="summonJokers" type="checkbox" checked /> 前三輪王牌 2/3 可召大／小鬼</label>
+            <label class="check"><input id="allowSelfSecretary" type="checkbox" /> 允許拿破崙指定自己手牌當秘書（獨裁）</label>
+          </div>
+          <button id="btnStartGame" class="primary big host-only hidden">開始對戰</button>
+          <p id="lobbyNotice" class="hint"></p>
+        </div>
+      </div>
+    </section>
+
+    <main id="gameView" class="game hidden">
+      <aside class="left-panel panel">
+        <div class="phase-card">
+          <p class="eyebrow">目前階段</p>
+          <h2 id="phaseTitle">準備中</h2>
+          <p id="phaseHelp">等待房主開始。</p>
+        </div>
+        <div class="contract">
+          <h3>合約</h3>
+          <div id="contractInfo">尚未叫牌</div>
+        </div>
+        <div class="scoreboard">
+          <h3>分數</h3>
+          <div id="scoreList"></div>
+        </div>
+        <div id="actionPanel" class="actions"></div>
+      </aside>
+
+      <section class="table-wrap">
+        <div id="table" class="table">
+          <div id="seat0" class="seat seat-0"></div>
+          <div id="seat1" class="seat seat-1"></div>
+          <div id="seat2" class="seat seat-2"></div>
+          <div id="seat3" class="seat seat-3"></div>
+          <div id="seat4" class="seat seat-4"></div>
+          <div class="center">
+            <div id="trickArea" class="trick-area"></div>
+            <div id="kittyArea" class="kitty-area"></div>
+          </div>
+        </div>
+        <div class="hand-panel panel">
+          <div class="hand-header">
+            <div>
+              <h3>你的手牌</h3>
+              <p id="handHint">依目前階段操作。</p>
+            </div>
+            <div id="handCount" class="pill"></div>
+          </div>
+          <div id="hand" class="hand"></div>
+        </div>
+      </section>
+
+      <aside class="right-panel panel">
+        <h3>牌局紀錄</h3>
+        <div id="log" class="log"></div>
+      </aside>
+    </main>
+
+    <dialog id="rulesDialog">
+      <div class="dialog-body">
+        <button id="closeRules" class="close">×</button>
+        <h2>玩法摘要</h2>
+        <p>本版採台灣常見 54 張、5 人各 10 張、4 張底牌；A/K/Q/J 是「頭／娃娃牌」共 16 張。叫牌 9–16 頭，最高叫者成為拿破崙，選王牌、換底牌後指定秘書牌。</p>
+        <ul>
+          <li>秘書牌最大；其後為大鬼、小鬼、王牌、首引花色。</li>
+          <li>可選擇「末三輪鬼牌變小」與「前三輪王牌 2/3 召鬼」。</li>
+          <li>多人版採房主瀏覽器作為牌局主持端；休閒對戰可用，正式反作弊需改用 Cloud Functions 或自架伺服器。</li>
+        </ul>
+      </div>
+    </dialog>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
