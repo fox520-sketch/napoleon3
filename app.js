@@ -36,8 +36,17 @@ const PHASE = {
   PLAY: "play",
   ROUND_END: "round_end"
 };
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDbOGwdYNY4mFG8Sgy8w_QdJpziWVoNx10",
+  authDomain: "napoleon-secretary-3.firebaseapp.com",
+  databaseURL: "https://napoleon-secretary-3-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "napoleon-secretary-3",
+  storageBucket: "napoleon-secretary-3.firebasestorage.app",
+  messagingSenderId: "189925612153",
+  appId: "1:189925612153:web:a6db7ea4dc1e8945c152a8"
+};
+
 const STORAGE = {
-  config: "napoleon.firebase.config.v1",
   name: "napoleon.player.name.v1"
 };
 
@@ -59,9 +68,7 @@ const appState = {
 };
 
 function init() {
-  const savedConfig = localStorage.getItem(STORAGE.config);
   const savedName = localStorage.getItem(STORAGE.name);
-  if (savedConfig) $("firebaseConfig").value = savedConfig;
   $("playerName").value = savedName || randomGuestName();
   const params = new URLSearchParams(location.search);
   const roomFromUrl = params.get("room");
@@ -85,6 +92,7 @@ function init() {
     $(id).addEventListener("change", syncLobbySettingsSoon);
   }
   renderConnectState();
+  window.setTimeout(() => connectFirebase(), 250);
 }
 
 function randomGuestName() {
@@ -109,9 +117,7 @@ function setStatus(message) {
 }
 
 function parseFirebaseConfig() {
-  const raw = $("firebaseConfig").value.trim();
-  if (!raw) throw new Error("請貼上 Firebase Web App 設定 JSON。");
-  const config = JSON.parse(raw);
+  const config = { ...FIREBASE_CONFIG };
   for (const key of ["apiKey", "authDomain", "databaseURL", "projectId", "appId"]) {
     if (!config[key]) throw new Error(`Firebase 設定缺少 ${key}。`);
   }
@@ -123,7 +129,6 @@ async function connectFirebase() {
     const config = parseFirebaseConfig();
     const name = sanitizeName($("playerName").value);
     $("playerName").value = name;
-    localStorage.setItem(STORAGE.config, JSON.stringify(config, null, 2));
     localStorage.setItem(STORAGE.name, name);
     setStatus("連線中...");
     if (!appState.firebaseApp) {
@@ -135,6 +140,7 @@ async function connectFirebase() {
     appState.uid = credential.user.uid;
     appState.connected = true;
     renderConnectState();
+    $("btnConnect").textContent = "已連線 Firebase";
     setStatus(`已連線：${name}`);
     toast("Firebase 已連線");
   } catch (error) {

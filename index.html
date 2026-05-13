@@ -25,8 +25,8 @@
       <div class="hero">
         <div>
           <span class="pill">GitHub Pages Ready</span>
-          <h2>連線 Firebase，建立多人房間</h2>
-          <p>第一次部署前，請建立 Firebase 專案、啟用匿名登入與 Realtime Database，然後把 Web App 設定貼到下方。設定會存在本機瀏覽器，不會送到其他地方。</p>
+          <h2>建立多人房間</h2>
+          <p>Firebase Web App 設定已寫入程式碼；開啟網頁後會自動連線。只要輸入暱稱與房號，就能建立或加入多人房間。</p>
         </div>
         <div class="wave">♠ ♥ ♦ ♣</div>
       </div>
@@ -42,18 +42,17 @@
         </label>
       </div>
 
-      <label class="field">
-        <span>Firebase Web App 設定 JSON</span>
-        <textarea id="firebaseConfig" rows="8" spellcheck="false" placeholder='{"apiKey":"...","authDomain":"...","databaseURL":"https://...firebasedatabase.app","projectId":"...","appId":"..."}'></textarea>
-        <small>可從 Firebase Console → Project settings → Your apps 複製。Realtime Database 必須包含 <code>databaseURL</code>。</small>
-      </label>
+      <div class="config-note">
+        <b>Firebase 已內建</b>
+        <span>專案：napoleon-secretary-3。若連線失敗，請確認 Firebase Anonymous 登入、Realtime Database 規則，以及 GitHub Pages 授權網域。</span>
+      </div>
 
       <div class="button-row">
-        <button id="btnConnect" class="primary">連線 Firebase</button>
+        <button id="btnConnect" class="primary">重新連線 Firebase</button>
         <button id="btnCreateRoom" class="primary" disabled>建立新房</button>
         <button id="btnJoinRoom" class="ghost" disabled>加入房間</button>
       </div>
-      <p id="connectStatus" class="hint">尚未連線。</p>
+      <p id="connectStatus" class="hint">正在自動連線 Firebase...</p>
     </section>
 
     <section id="lobbyView" class="card hidden">

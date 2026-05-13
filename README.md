@@ -19,14 +19,15 @@
 
 ## Firebase 設定
 
-1. 到 Firebase Console 建立專案。
-2. 建立 Web App，複製 Firebase config JSON。
-3. 啟用 Authentication → Sign-in method → Anonymous。
-4. 建立 Realtime Database，記下 databaseURL。
-5. 到 Realtime Database → Rules，貼上本專案的 `database.rules.json` 內容並發布。
-6. 開啟網頁後，把 config JSON 貼到畫面上的 Firebase 設定欄位。
+Firebase Web App 設定已內建在 `app.js` 的 `FIREBASE_CONFIG`，玩家不需要在網頁上輸入設定。
 
-範例格式請看 `firebase-config.example.json`。
+部署前請確認：
+
+1. Firebase Console → Authentication → Sign-in method → Anonymous 已啟用。
+2. Firebase Console → Realtime Database → Rules 已貼上本專案的 `database.rules.json` 內容並發布。
+3. 部署到 GitHub Pages 後，Firebase Console → Authentication → Settings → Authorized domains 已加入你的 `github.io` 網域，例如 `fox520-sketch.github.io`。
+
+若日後更換 Firebase 專案，只要修改 `app.js` 最上方的 `FIREBASE_CONFIG`。
 
 ## GitHub Pages 部署
 
@@ -34,7 +35,7 @@
 2. 把本資料夾所有檔案推到 `main` 分支。
 3. 到 repository 的 Settings → Pages，把 Build and deployment 選為 GitHub Actions。
 4. 推送後 Actions 會使用 `.github/workflows/pages.yml` 自動部署。
-5. 開啟 GitHub Pages 網址，貼上 Firebase config，即可建立房間。
+5. 開啟 GitHub Pages 網址；網頁會自動連線 Firebase，即可建立房間。
 
 ## 本機測試
 
@@ -55,14 +56,13 @@ http://localhost:8080
 - `index.html`：主頁與遊戲 UI
 - `style.css`：簡約清爽海洋風樣式
 - `app.js`：Firebase 多人同步、房間、牌局、AI、計分邏輯
-- `firebase-config.example.json`：Firebase 設定範例
 - `database.rules.json`：Realtime Database 基礎規則
 - `.github/workflows/pages.yml`：GitHub Pages 自動部署 workflow
 - `.nojekyll`：避免 GitHub Pages 使用 Jekyll 處理靜態檔案
 
 ## 遊戲流程
 
-1. 玩家連線 Firebase。
+1. 網頁自動連線 Firebase。
 2. 房主建立房間並分享房號或邀請連結。
 3. 其他玩家加入；房主可用電腦補滿 5 人。
 4. 房主調整規則並開始。
