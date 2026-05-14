@@ -58,6 +58,7 @@ const appState = {
   roomCode: null,
   room: null,
   roomUnsub: null,
+  autoJoinCode: null,
   actionsAttached: false,
   actionQueue: [],
   processingActions: false,
@@ -72,7 +73,10 @@ function init() {
   $("playerName").value = savedName || randomGuestName();
   const params = new URLSearchParams(location.search);
   const roomFromUrl = params.get("room");
-  if (roomFromUrl) $("roomCode").value = roomFromUrl.toUpperCase();
+  if (roomFromUrl) {
+    appState.autoJoinCode = roomFromUrl.toUpperCase();
+    $("roomCode").value = appState.autoJoinCode;
+  }
 
   $("btnConnect").addEventListener("click", connectFirebase);
   $("btnCreateRoom").addEventListener("click", createRoom);
@@ -143,6 +147,13 @@ async function connectFirebase() {
     $("btnConnect").textContent = "已連線 Firebase";
     setStatus(`已連線：${name}`);
     toast("Firebase 已連線");
+    if (appState.autoJoinCode && !appState.roomCode) {
+      const code = appState.autoJoinCode;
+      appState.autoJoinCode = null;
+      $("roomCode").value = code;
+      setStatus(`已連線，正在加入房間 ${code}...`);
+      await joinRoom(code);
+    }
   } catch (error) {
     console.error(error);
     setStatus(error.message || "Firebase 連線失敗。");
@@ -354,7 +365,11 @@ function renderRoom() {
 function renderLobby() {
   const room = appState.room;
   $("lobbyRoomCode").textContent = room.meta.code;
-  $("lobbyShare").textContent = `邀請朋友開啟此頁並輸入房號 ${room.meta.code}`;
+  const inviteUrl = buildInviteLink(room.meta.code);
+  $("lobbyShare").textContent = `房號 ${room.meta.code}：分享連結或掃描 QR Code 加入。`;
+  $("inviteLinkText").textContent = inviteUrl;
+  $("inviteQr").src = buildQrCodeUrl(inviteUrl);
+  $("inviteQr").alt = `房間 ${room.meta.code} 加入連結 QR Code`;
   const seats = room.lobby?.seats || {};
   const ordered = Array.from({ length: 5 }, (_, i) => seats[i] || null);
   $("lobbySeats").innerHTML = ordered.map((seat, i) => {
@@ -1281,8 +1296,17 @@ function aiBestSuit(hand) {
   return Object.entries(scores).sort((a, b) => b[1] - a[1])[0]?.[0] || "S";
 }
 
+function buildInviteLink(code = appState.roomCode) {
+  return `${location.origin}${location.pathname}?room=${encodeURIComponent(code)}`;
+}
+
+function buildQrCodeUrl(url) {
+  const size = 220;
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=12&data=${encodeURIComponent(url)}`;
+}
+
 async function copyInviteLink() {
-  const url = `${location.origin}${location.pathname}?room=${appState.roomCode}`;
+  const url = buildInviteLink();
   try {
     await navigator.clipboard.writeText(url);
     toast("已複製邀請連結");

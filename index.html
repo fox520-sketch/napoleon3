@@ -62,7 +62,15 @@
           <h2 id="lobbyRoomCode">----</h2>
           <p id="lobbyShare" class="hint"></p>
         </div>
-        <button id="btnCopyLink" class="ghost">複製邀請連結</button>
+        <div class="invite-card" aria-label="房間邀請資訊">
+          <img id="inviteQr" class="qr-code" alt="加入房間 QR Code" />
+          <div class="invite-meta">
+            <p class="eyebrow">邀請</p>
+            <p class="hint compact">朋友掃描 QR Code 或開啟連結即可帶入房號。</p>
+            <p id="inviteLinkText" class="invite-url"></p>
+            <button id="btnCopyLink" class="ghost">複製邀請連結</button>
+          </div>
+        </div>
       </div>
 
       <div class="grid lobby-grid">
