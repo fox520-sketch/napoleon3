@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>拿破崙與秘書｜Firebase 多人對戰</title>
-  <meta name="description" content="台式拿破崙與秘書 Firebase 多人房間版，可部署到 GitHub Pages。" />
+  <title>拿破崙與秘書｜單人離線・Firebase 多人對戰</title>
+  <meta name="description" content="台式拿破崙與秘書單人離線與 Firebase 多人房間版，可部署到 GitHub Pages。" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
       <div>
         <p class="eyebrow">Taiwan Napoleon & Secretary</p>
         <h1>拿破崙與秘書</h1>
-        <p class="subtitle">Firebase 多人房間・5 人對戰・不足可由電腦補位</p>
+        <p class="subtitle">單人離線・Firebase 多人房間・5 人對戰・不足可由電腦補位</p>
       </div>
       <div class="top-actions">
         <button id="btnRules" class="ghost">玩法摘要</button>
@@ -25,11 +25,32 @@
       <div class="hero">
         <div>
           <span class="pill">GitHub Pages Ready</span>
-          <h2>建立多人房間</h2>
-          <p>Firebase Web App 設定已寫入程式碼；開啟網頁後會自動連線。只要輸入暱稱與房號，就能建立或加入多人房間。</p>
+          <h2>開始遊戲</h2>
+          <p>可直接單人離線開局，或連線 Firebase 建立多人房間。單人模式不需要建立新房，會自動補 4 位電腦。</p>
         </div>
         <div class="wave">♠ ♥ ♦ ♣</div>
       </div>
+
+      <div class="quick-start">
+        <div>
+          <h3>單人離線</h3>
+          <p class="hint">不用登入、不用房號，直接以你加 4 位電腦開始。本局只在此裝置進行。</p>
+        </div>
+        <div class="quick-actions">
+          <label class="mini-field">
+            <span>電腦難度</span>
+            <select id="offlineDifficulty">
+              <option value="5">5 輕鬆</option>
+              <option value="10" selected>10 一般</option>
+              <option value="15">15 困難</option>
+              <option value="20">20 專家</option>
+            </select>
+          </label>
+          <button id="btnStartOffline" class="primary">單人離線開始</button>
+        </div>
+      </div>
+
+      <h3 class="section-title">多人線上</h3>
 
       <div class="grid two">
         <label class="field">
@@ -48,11 +69,11 @@
       </div>
 
       <div class="button-row">
-        <button id="btnConnect" class="primary">重新連線 Firebase</button>
+        <button id="btnConnect" class="primary">連線 Firebase</button>
         <button id="btnCreateRoom" class="primary" disabled>建立新房</button>
         <button id="btnJoinRoom" class="ghost" disabled>加入房間</button>
       </div>
-      <p id="connectStatus" class="hint">正在自動連線 Firebase...</p>
+      <p id="connectStatus" class="hint">單人離線可直接開始；多人模式請先連線 Firebase。</p>
     </section>
 
     <section id="lobbyView" class="card hidden">
@@ -125,6 +146,7 @@
 
     <main id="gameView" class="game hidden">
       <aside class="left-panel panel">
+        <button id="btnGameExit" class="ghost game-exit">返回主畫面</button>
         <div class="phase-card">
           <p class="eyebrow">目前階段</p>
           <h2 id="phaseTitle">準備中</h2>
@@ -148,6 +170,11 @@
           <div id="seat2" class="seat seat-2"></div>
           <div id="seat3" class="seat seat-3"></div>
           <div id="seat4" class="seat seat-4"></div>
+          <div id="play0" class="seat-play play-0"></div>
+          <div id="play1" class="seat-play play-1"></div>
+          <div id="play2" class="seat-play play-2"></div>
+          <div id="play3" class="seat-play play-3"></div>
+          <div id="play4" class="seat-play play-4"></div>
           <div class="center">
             <div id="trickArea" class="trick-area"></div>
             <div id="kittyArea" class="kitty-area"></div>

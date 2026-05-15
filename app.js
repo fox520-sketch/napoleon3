@@ -55,6 +55,7 @@ const appState = {
   auth: null,
   db: null,
   uid: null,
+  firebaseUid: null,
   roomCode: null,
   room: null,
   roomUnsub: null,
@@ -65,7 +66,9 @@ const appState = {
   botTimer: null,
   presenceKey: null,
   selectedExchange: new Set(),
-  connected: false
+  connected: false,
+  offline: false,
+  offlineTimer: null
 };
 
 function init() {
@@ -78,10 +81,12 @@ function init() {
     $("roomCode").value = appState.autoJoinCode;
   }
 
+  $("btnStartOffline").addEventListener("click", startOfflineGame);
   $("btnConnect").addEventListener("click", connectFirebase);
   $("btnCreateRoom").addEventListener("click", createRoom);
   $("btnJoinRoom").addEventListener("click", joinRoomFromInput);
   $("btnLeave").addEventListener("click", leaveRoom);
+  $("btnGameExit").addEventListener("click", leaveRoom);
   $("btnCopyLink").addEventListener("click", copyInviteLink);
   $("btnAddBot").addEventListener("click", () => hostAddBot());
   $("btnRemoveBot").addEventListener("click", () => hostRemoveBot());
@@ -96,7 +101,9 @@ function init() {
     $(id).addEventListener("change", syncLobbySettingsSoon);
   }
   renderConnectState();
-  window.setTimeout(() => connectFirebase(), 250);
+  if (appState.autoJoinCode) {
+    window.setTimeout(() => connectFirebase(), 250);
+  }
 }
 
 function randomGuestName() {
@@ -141,7 +148,8 @@ async function connectFirebase() {
       appState.db = getDatabase(appState.firebaseApp);
     }
     const credential = await signInAnonymously(appState.auth);
-    appState.uid = credential.user.uid;
+    appState.firebaseUid = credential.user.uid;
+    if (!appState.offline) appState.uid = appState.firebaseUid;
     appState.connected = true;
     renderConnectState();
     $("btnConnect").textContent = "已連線 Firebase";
@@ -164,6 +172,7 @@ async function connectFirebase() {
 function renderConnectState() {
   $("btnCreateRoom").disabled = !appState.connected;
   $("btnJoinRoom").disabled = !appState.connected;
+  $("btnStartOffline").disabled = false;
 }
 
 function roomRef(path = "") {
@@ -175,6 +184,50 @@ function generateRoomCode() {
   let code = "";
   for (let i = 0; i < 5; i += 1) code += alphabet[Math.floor(Math.random() * alphabet.length)];
   return code;
+}
+
+function startOfflineGame() {
+  detachRoom();
+  appState.offline = true;
+  appState.uid = "offline-human";
+  appState.roomCode = "OFFLINE";
+  appState.selectedExchange.clear();
+  const name = sanitizeName($("playerName").value);
+  $("playerName").value = name;
+  localStorage.setItem(STORAGE.name, name);
+  const settings = {
+    ...defaultSettings(),
+    difficulty: Number($("offlineDifficulty").value || 10)
+  };
+  const seats = {
+    0: makeHumanSeat(0, appState.uid, name),
+    1: makeBotSeat(1, 1),
+    2: makeBotSeat(2, 2),
+    3: makeBotSeat(3, 3),
+    4: makeBotSeat(4, 4)
+  };
+  const players = Array.from({ length: 5 }, (_, seat) => seats[seat]);
+  appState.room = {
+    meta: {
+      code: "OFFLINE",
+      hostUid: appState.uid,
+      status: "game",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      mode: "offline"
+    },
+    lobby: { dealer: 0, settings, seats },
+    game: createGame(players, settings, 0, [0, 0, 0, 0, 0])
+  };
+  history.replaceState(null, "", location.pathname);
+  $("connectView").classList.add("hidden");
+  $("lobbyView").classList.add("hidden");
+  $("gameView").classList.remove("hidden");
+  $("btnLeave").classList.remove("hidden");
+  document.body.classList.add("in-game", "offline-game");
+  renderGame();
+  scheduleHostAutomation();
+  toast("已開始單人離線局");
 }
 
 async function createRoom() {
@@ -301,9 +354,25 @@ function detachRoom() {
   appState.processingActions = false;
   appState.presenceKey = null;
   clearTimeout(appState.botTimer);
+  clearTimeout(appState.offlineTimer);
 }
 
 async function leaveRoom(updateSeat = true) {
+  if (appState.offline) {
+    detachRoom();
+    appState.offline = false;
+    appState.uid = appState.firebaseUid || appState.uid;
+    appState.roomCode = null;
+    appState.selectedExchange.clear();
+    document.body.classList.remove("in-game", "offline-game");
+    history.replaceState(null, "", location.pathname);
+    $("connectView").classList.remove("hidden");
+    $("lobbyView").classList.add("hidden");
+    $("gameView").classList.add("hidden");
+    $("btnLeave").classList.add("hidden");
+    renderConnectState();
+    return;
+  }
   if (updateSeat && appState.roomCode && appState.room) {
     const seat = myLobbySeat();
     if (seat !== null && appState.room.meta?.status === "lobby") {
@@ -313,6 +382,7 @@ async function leaveRoom(updateSeat = true) {
   detachRoom();
   appState.roomCode = null;
   appState.selectedExchange.clear();
+  document.body.classList.remove("in-game", "offline-game");
   history.replaceState(null, "", location.pathname);
   $("connectView").classList.remove("hidden");
   $("lobbyView").classList.add("hidden");
@@ -346,11 +416,15 @@ function myGameSeat(game = appState.room?.game) {
 }
 
 function isHost() {
+  if (appState.offline) return true;
   return appState.room?.meta?.hostUid === appState.uid;
 }
 
 function renderRoom() {
   const status = appState.room?.meta?.status;
+  const inGame = status !== "lobby" && !!appState.room;
+  document.body.classList.toggle("in-game", inGame);
+  document.body.classList.toggle("offline-game", !!appState.offline && inGame);
   if (status === "lobby") {
     $("lobbyView").classList.remove("hidden");
     $("gameView").classList.add("hidden");
@@ -491,6 +565,16 @@ async function hostNextRound() {
   if (players.length !== 5) return toast("座位不足，請回大廳重新補人");
   const nextDealer = ((oldGame.dealer || 0) + 1) % 5;
   const game = createGame(players, appState.room.lobby.settings || oldGame.settings || defaultSettings(), nextDealer, scores);
+  if (appState.offline) {
+    appState.room.lobby.dealer = nextDealer;
+    scores.forEach((score, seat) => { if (appState.room.lobby.seats[seat]) appState.room.lobby.seats[seat].score = score; });
+    appState.room.game = game;
+    appState.room.meta.status = "game";
+    appState.room.meta.updatedAt = Date.now();
+    renderRoom();
+    scheduleHostAutomation();
+    return;
+  }
   const scoreUpdates = {};
   scores.forEach((score, seat) => { scoreUpdates[`lobby/seats/${seat}/score`] = score; });
   await update(roomRef(), {
@@ -551,6 +635,7 @@ function createGame(lobbyPlayers, settings, dealer = 0, scores = [0, 0, 0, 0, 0]
     trickNo: 0,
     captured: [[], [], [], [], []],
     requestedId: null,
+    pendingClear: null,
     bidding: { highest: null, turn: dealer },
     log: [`第 ${dealer + 1} 家先叫牌。最低 9 頭，最高者成為拿破崙。`],
     createdAt: Date.now()
@@ -605,16 +690,22 @@ async function processActionQueue() {
 }
 
 async function submitAction(type, payload = {}) {
-  const game = appState.room?.game;
+  const game = normalizeGame(appState.room?.game);
   const seat = myGameSeat(game);
   if (seat === null) return toast("你不在此局中");
-  await push(ref(appState.db, `rooms/${appState.roomCode}/actions`), {
+  const action = {
     uid: appState.uid,
     seat,
     type,
     payload,
     createdAt: Date.now()
-  });
+  };
+  if (appState.offline) {
+    const changed = applyAction(game, action);
+    if (changed) await saveGame(game);
+    return;
+  }
+  await push(ref(appState.db, `rooms/${appState.roomCode}/actions`), action);
 }
 
 function normalizeGame(game) {
@@ -624,6 +715,7 @@ function normalizeGame(game) {
   if (!Array.isArray(game.kitty)) game.kitty = [];
   if (!Array.isArray(game.log)) game.log = [];
   if (!Array.isArray(game.players)) game.players = [];
+  if (game.pendingClear && (!game.pendingClear.until || !Array.isArray(game.trick))) game.pendingClear = null;
   game.players.forEach((p) => { if (p && !Array.isArray(p.hand)) p.hand = []; });
   ensureCaptured(game);
   return game;
@@ -642,6 +734,7 @@ function applyAction(game, action) {
   const player = game.players?.[seat];
   if (!player) return false;
   if (player.type === "human" && player.uid !== action.uid) return false;
+  if (game.pendingClear) return false;
 
   if (game.phase === PHASE.BIDDING && game.currentPlayer === seat) {
     if (action.type === "pass") return passBid(game, seat);
@@ -838,9 +931,24 @@ function settleTrick(game) {
   const winner = best.seat;
   const heads = countPoints(game.trick.map((p) => p.card));
   game.captured[winner] = [...(game.captured[winner] || []), ...game.trick.map((p) => p.card)];
-  appendLog(game, `${game.players[winner].name} 以 ${cardLong(best.card)} 吃下第 ${game.trickNo + 1} 墩，取得 ${heads} 張頭。`);
+  game.pendingClear = {
+    until: Date.now() + 3000,
+    winner,
+    heads,
+    bestCardId: best.card.id,
+    trickNo: game.trickNo
+  };
+  game.currentPlayer = null;
+  appendLog(game, `${game.players[winner].name} 以 ${cardLong(best.card)} 吃下第 ${game.trickNo + 1} 墩，取得 ${heads} 張頭。3 秒後清空牌桌。`);
+}
+
+function clearPendingTrickIfReady(game) {
+  if (!game?.pendingClear) return false;
+  if (Date.now() < game.pendingClear.until) return false;
+  const winner = game.pendingClear.winner;
   game.trick = [];
   game.requestedId = null;
+  game.pendingClear = null;
   game.trickNo += 1;
   if (game.trickNo >= 10) {
     endRound(game);
@@ -848,6 +956,7 @@ function settleTrick(game) {
     game.leader = winner;
     game.currentPlayer = winner;
   }
+  return true;
 }
 
 function cardStrength(card, game, leadSuit) {
@@ -894,6 +1003,18 @@ function endRound(game) {
 }
 
 async function saveGame(game) {
+  if (appState.offline) {
+    appState.room.game = game;
+    appState.room.meta.updatedAt = Date.now();
+    if (game.phase === PHASE.ROUND_END) {
+      game.players.forEach((p) => {
+        if (appState.room.lobby?.seats?.[p.seat]) appState.room.lobby.seats[p.seat].score = p.score || 0;
+      });
+    }
+    renderRoom();
+    scheduleHostAutomation();
+    return;
+  }
   await update(roomRef(), {
     game,
     "meta/updatedAt": Date.now()
@@ -910,16 +1031,29 @@ function scheduleHostAutomation() {
   if (!isHost()) return;
   const game = normalizeGame(appState.room?.game);
   if (!game || appState.room?.meta?.status !== "game") return;
+  if (game.pendingClear) {
+    const delay = Math.max(0, game.pendingClear.until - Date.now()) + 60;
+    appState.botTimer = setTimeout(async () => {
+      const latest = appState.offline ? normalizeGame(appState.room?.game) : normalizeGame((await get(roomRef("game"))).val());
+      if (!latest) return;
+      const changed = clearPendingTrickIfReady(latest);
+      if (changed) await saveGame(latest);
+    }, delay);
+    return;
+  }
   const action = getBotAction(game);
   if (!action) return;
+  const difficulty = game.settings?.difficulty || 10;
+  const delay = game.phase === PHASE.BIDDING
+    ? 1100 + difficulty * 45 + Math.random() * 700
+    : 650 + Math.random() * 550;
   appState.botTimer = setTimeout(async () => {
-    const snap = await get(roomRef("game"));
-    const latest = normalizeGame(snap.val());
+    const latest = appState.offline ? normalizeGame(appState.room?.game) : normalizeGame((await get(roomRef("game"))).val());
     const botAction = getBotAction(latest);
     if (!botAction) return;
     const changed = applyAction(latest, botAction);
     if (changed) await saveGame(latest);
-  }, 650 + Math.random() * 550);
+  }, delay);
 }
 
 function getBotAction(game) {
@@ -941,21 +1075,47 @@ function getBotAction(game) {
 function aiBidAction(game, seat) {
   const player = game.players[seat];
   const high = game.bidding?.highest?.amount || 8;
+  const difficulty = game.settings?.difficulty || 10;
   const estimate = estimateHand(player.hand, game.settings);
-  const noise = (Math.random() - 0.5) * (22 - (game.settings?.difficulty || 10)) / 6;
-  const target = Math.max(8, Math.min(16, Math.round(estimate + noise)));
-  if (target > high && target >= 9) return { uid: player.uid, seat, type: "bid", payload: { amount: target } };
-  return { uid: player.uid, seat, type: "pass", payload: {} };
+  const caution = (21 - difficulty) * 0.035;
+  const noise = (Math.random() - 0.5) * Math.max(0.15, (21 - difficulty) / 18);
+  const ceiling = Math.max(8, Math.min(16, Math.floor(estimate - caution + noise)));
+  if (ceiling <= high || ceiling < 9) return { uid: player.uid, seat, type: "pass", payload: {} };
+
+  // 電腦改採保守遞叫：通常只加一頭；牌力明顯超過時，高難度才偶爾跳叫。
+  let amount = high + 1;
+  if (difficulty >= 14 && ceiling >= high + 3 && Math.random() < (difficulty - 12) / 18) amount = high + 2;
+  if (difficulty >= 18 && ceiling >= high + 4 && Math.random() < 0.18) amount = high + 3;
+  amount = Math.min(amount, ceiling, 16);
+  return { uid: player.uid, seat, type: "bid", payload: { amount } };
 }
 
 function estimateHand(hand, settings) {
   const points = countPoints(hand);
   const jokers = hand.filter((c) => c.joker).length;
+  const suitScores = { S: 0, H: 0, D: 0, C: 0 };
   const suitCounts = { S: 0, H: 0, D: 0, C: 0 };
-  hand.forEach((c) => { if (c.suit) suitCounts[c.suit] += c.value >= 10 ? 1.5 : 1; });
+  hand.forEach((c) => {
+    if (!c.suit) return;
+    suitCounts[c.suit] += 1;
+    suitScores[c.suit] += c.value + (c.point ? 2 : 0);
+  });
+  const bestSuitScore = Math.max(...Object.values(suitScores));
   const longest = Math.max(...Object.values(suitCounts));
-  const highCards = hand.filter((c) => c.joker || c.value >= 12).length;
-  return 7 + points * 0.55 + jokers * 1.5 + longest * 0.25 + highCards * 0.28 + (settings?.difficulty || 10) / 30;
+  const aces = hand.filter((c) => c.rank === "A").length;
+  const kings = hand.filter((c) => c.rank === "K").length;
+  const queens = hand.filter((c) => c.rank === "Q").length;
+  const weakSuitPenalty = Object.values(suitCounts).filter((n) => n === 0 || n === 1).length * 0.18;
+  return 7.55
+    + points * 0.34
+    + jokers * 1.15
+    + Math.min(2.0, bestSuitScore / 34)
+    + Math.max(0, longest - 3) * 0.18
+    + aces * 0.22
+    + kings * 0.12
+    + queens * 0.05
+    - weakSuitPenalty
+    + (settings?.difficulty || 10) / 80;
 }
 
 function aiChooseTrump(game, seat) {
@@ -1073,6 +1233,11 @@ function renderPhase(game) {
     [PHASE.ROUND_END]: "本局結算"
   };
   $("phaseTitle").textContent = titles[game.phase] || "牌局";
+  if (game.pendingClear) {
+    const winner = game.players[game.pendingClear.winner]?.name || "勝方";
+    $("phaseHelp").textContent = `第 ${game.trickNo + 1} 墩完成，由 ${winner} 吃下；牌桌會停留 3 秒再清空。`;
+    return;
+  }
   const current = game.currentPlayer !== null && game.currentPlayer !== undefined ? game.players[game.currentPlayer]?.name : "";
   const helps = {
     [PHASE.BIDDING]: `輪到 ${current} 叫牌。最低 9 頭，須高於目前最高叫品。`,
@@ -1122,7 +1287,9 @@ function renderSeats(game) {
     const isMine = mine === seat ? "mine" : "";
     el.className = `seat seat-${seat} ${current} ${isMine}`;
     const tags = [];
+    const capturedHeads = countPoints(game.captured?.[seat] || []);
     tags.push(`<span class="tag">${p.hand?.length || 0} 張</span>`);
+    tags.push(`<span class="tag">吃 ${capturedHeads} 頭</span>`);
     if (p.type === "bot") tags.push(`<span class="tag gold">電腦</span>`);
     if (p.seat === game.napoleon) tags.push(`<span class="tag danger">拿破崙</span>`);
     if (p.seat === game.secretaryOwner && game.secretaryRevealed) tags.push(`<span class="tag gold">秘書</span>`);
@@ -1132,11 +1299,27 @@ function renderSeats(game) {
 }
 
 function renderTrick(game) {
-  const trickHtml = (game.trick || []).map((play) => {
-    const card = play.card;
-    return `<div class="trick-card"><div class="play-card ${cardClass(card)}">${cardLabel(card)}</div><small>${escapeHtml(game.players[play.seat].name)}</small></div>`;
-  }).join("");
-  $("trickArea").innerHTML = trickHtml || `<div class="hint" style="color:white">等待出牌</div>`;
+  for (let seat = 0; seat < 5; seat += 1) {
+    const holder = $(`play${seat}`);
+    if (!holder) continue;
+    const play = (game.trick || []).find((item) => item.seat === seat);
+    if (play) {
+      holder.innerHTML = `<div class="trick-card"><div class="play-card ${cardClass(play.card)}">${cardLabel(play.card)}</div><small>${escapeHtml(game.players[seat].name)}</small></div>`;
+      holder.classList.remove("empty");
+    } else {
+      holder.innerHTML = "";
+      holder.classList.add("empty");
+    }
+  }
+
+  let centerText = "等待出牌";
+  if (game.pendingClear) {
+    const winner = game.players[game.pendingClear.winner]?.name || "勝方";
+    centerText = `${winner} 吃下本墩：${game.pendingClear.heads || 0} 頭`;
+  } else if ((game.trick || []).length) {
+    centerText = `第 ${game.trickNo + 1} 墩，已出 ${game.trick.length}/5 張`;
+  }
+  $("trickArea").innerHTML = `<div class="table-status">${escapeHtml(centerText)}</div>`;
   const kittyText = game.phase === PHASE.EXCHANGE && game.napoleon === myGameSeat(game)
     ? `你已拿起底牌，請蓋掉 4 張。`
     : (game.buried?.length ? `底牌已蓋牌：${game.buried.length} 張` : `底牌：${game.kitty?.length || 4} 張`);
@@ -1195,6 +1378,11 @@ function renderActions(game) {
   const seat = myGameSeat(game);
   const myTurn = isMyTurn(game);
   const el = $("actionPanel");
+  if (game.pendingClear) {
+    const winner = game.players[game.pendingClear.winner]?.name || "勝方";
+    el.innerHTML = `<p class="hint">${escapeHtml(winner)} 吃下本墩，牌桌保留 3 秒後清空。</p>`;
+    return;
+  }
   if (game.phase === PHASE.ROUND_END) {
     el.innerHTML = isHost()
       ? `<button id="btnNextRound" class="primary">開始下一局</button>`
