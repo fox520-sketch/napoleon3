@@ -68,7 +68,9 @@ const appState = {
   selectedExchange: new Set(),
   connected: false,
   offline: false,
-  offlineTimer: null
+  offlineTimer: null,
+  currentRoundResultKey: null,
+  dismissedRoundResultKey: null
 };
 
 function init() {
@@ -93,6 +95,7 @@ function init() {
   $("btnStartGame").addEventListener("click", hostStartGame);
   $("btnRules").addEventListener("click", () => $("rulesDialog").showModal());
   $("closeRules").addEventListener("click", () => $("rulesDialog").close());
+  $("resultClose").addEventListener("click", hideRoundResultOverlay);
   $("difficulty").addEventListener("input", () => {
     $("difficultyLabel").textContent = $("difficulty").value;
     syncLobbySettingsSoon();
@@ -991,11 +994,24 @@ function endRound(game) {
   const napDelta = made ? base : -base;
   const secDelta = made ? Math.round(base / 2) : -Math.round(base / 2);
   const defDelta = made ? -Math.round(base / 2) : Math.round(base / 2);
+  const scoreDeltas = [0, 0, 0, 0, 0];
   game.players.forEach((p) => {
-    if (p.seat === game.napoleon) p.score += napDelta;
-    else if (p.seat === game.secretaryOwner) p.score += secDelta;
-    else p.score += defDelta;
+    let delta = defDelta;
+    if (p.seat === game.napoleon) delta = napDelta;
+    else if (p.seat === game.secretaryOwner) delta = secDelta;
+    p.score += delta;
+    scoreDeltas[p.seat] = delta;
   });
+  game.roundResult = {
+    made,
+    winningTeam: made ? "nap" : "def",
+    teamHeads,
+    defenderHeads,
+    buriedHeads,
+    contract: game.contract,
+    scoreDeltas,
+    endedAt: Date.now()
+  };
   game.phase = PHASE.ROUND_END;
   game.currentPlayer = null;
   game.secretaryRevealed = true;
@@ -1258,6 +1274,89 @@ function teamOf(game, seat) {
   return "def";
 }
 
+function calculateRoundResult(game) {
+  if (!game || game.napoleon === null || game.napoleon === undefined || !game.contract) return null;
+  const teamSeats = new Set([game.napoleon]);
+  if (game.secretaryOwner !== null && game.secretaryOwner !== undefined) teamSeats.add(game.secretaryOwner);
+  let teamHeads = 0;
+  let defenderHeads = 0;
+  (game.captured || []).forEach((cards, seat) => {
+    const heads = countPoints(cards || []);
+    if (teamSeats.has(seat)) teamHeads += heads;
+    else defenderHeads += heads;
+  });
+  const buriedHeads = countPoints(game.buried || []);
+  if (game.settings?.buriedMode === "defenders") defenderHeads += buriedHeads;
+  else if (game.settings?.buriedMode !== "addContract") teamHeads += buriedHeads;
+  const made = teamHeads >= game.contract;
+  return {
+    made,
+    winningTeam: made ? "nap" : "def",
+    teamHeads,
+    defenderHeads,
+    buriedHeads,
+    contract: game.contract,
+    scoreDeltas: game.roundResult?.scoreDeltas || [],
+    endedAt: game.roundResult?.endedAt || game.createdAt || Date.now()
+  };
+}
+
+function roundResultKey(game, result) {
+  return [appState.roomCode || "room", game.createdAt || "game", result.endedAt || "end", result.winningTeam, result.teamHeads, result.defenderHeads, result.contract].join(":");
+}
+
+function hideRoundResultOverlay() {
+  const overlay = $("resultOverlay");
+  if (!overlay) return;
+  overlay.classList.remove("show", "win", "lose");
+  overlay.classList.add("hidden");
+  if (appState.currentRoundResultKey) appState.dismissedRoundResultKey = appState.currentRoundResultKey;
+}
+
+function renderRoundResultAnimation(game) {
+  const overlay = $("resultOverlay");
+  if (!overlay) return;
+  if (game.phase !== PHASE.ROUND_END) {
+    overlay.classList.remove("show", "win", "lose");
+    overlay.classList.add("hidden");
+    appState.currentRoundResultKey = null;
+    return;
+  }
+  const seat = myGameSeat(game);
+  const result = game.roundResult || calculateRoundResult(game);
+  if (seat === null || !result) {
+    overlay.classList.remove("show", "win", "lose");
+    overlay.classList.add("hidden");
+    return;
+  }
+  const key = roundResultKey(game, result);
+  if (appState.dismissedRoundResultKey === key) {
+    overlay.classList.remove("show", "win", "lose");
+    overlay.classList.add("hidden");
+    return;
+  }
+
+  const playerTeam = teamOf(game, seat);
+  const playerWon = result.winningTeam === playerTeam;
+  const delta = result.scoreDeltas?.[seat] ?? 0;
+  const teamName = playerTeam === "nap" ? "拿破崙軍" : "聯合國";
+  const winnerName = result.winningTeam === "nap" ? "拿破崙軍" : "聯合國";
+  $("resultTitle").textContent = playerWon ? "勝利！" : "失敗…";
+  $("resultSubtitle").textContent = playerWon ? `你的陣營「${teamName}」贏得本局。` : `你的陣營「${teamName}」本局失利。`;
+  $("resultStats").innerHTML = `
+    <div><span>勝方</span><b>${winnerName}</b></div>
+    <div><span>拿破崙軍</span><b>${result.teamHeads} / ${result.contract} 頭</b></div>
+    <div><span>聯合國</span><b>${result.defenderHeads} 頭</b></div>
+    <div><span>本局分數</span><b>${delta >= 0 ? "+" : ""}${delta}</b></div>
+  `;
+
+  overlay.classList.remove("hidden", "win", "lose", "show");
+  overlay.classList.add(playerWon ? "win" : "lose");
+  void overlay.offsetWidth;
+  overlay.classList.add("show");
+  appState.currentRoundResultKey = key;
+}
+
 function renderGame() {
   const game = appState.room?.game;
   if (!game) return;
@@ -1270,6 +1369,7 @@ function renderGame() {
   renderHand(game);
   renderActions(game);
   renderLog(game);
+  renderRoundResultAnimation(game);
 }
 
 function renderPhase(game) {

@@ -211,6 +211,20 @@
       </div>
     </dialog>
 
+    <div id="resultOverlay" class="result-overlay hidden" aria-live="polite" aria-modal="true" role="dialog">
+      <div class="result-fx" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+      </div>
+      <div class="result-card">
+        <p class="eyebrow">本局結果</p>
+        <h2 id="resultTitle">勝利！</h2>
+        <p id="resultSubtitle" class="result-subtitle"></p>
+        <div id="resultStats" class="result-stats"></div>
+        <button id="resultClose" class="primary">繼續</button>
+      </div>
+    </div>
+
     <div id="toast" class="toast hidden"></div>
   </div>
   <script type="module" src="app.js"></script>
