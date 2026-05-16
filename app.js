@@ -1478,7 +1478,22 @@ function renderPhase(game) {
 
 function renderContract(game) {
   if (game.napoleon === null || game.napoleon === undefined) {
-    $("contractInfo").innerHTML = "尚未叫牌";
+    if (game.phase === PHASE.BIDDING) {
+      const high = game.bidding?.highest || null;
+      const highPlayer = high ? game.players?.[high.seat]?.name : null;
+      const current = game.currentPlayer !== null && game.currentPlayer !== undefined ? game.players?.[game.currentPlayer]?.name : null;
+      $("contractInfo").innerHTML = `
+        <div class="bid-mini">
+          <span>輪到叫牌</span><b>${escapeHtml(current || "-")}</b>
+        </div>
+        <div class="bid-mini emphasized">
+          <span>目前最高叫品</span><b>${escapeHtml(formatBid(high))}</b>
+          ${highPlayer ? `<small>${escapeHtml(highPlayer)} 領先</small>` : `<small>尚未有人叫牌</small>`}
+        </div>
+      `;
+    } else {
+      $("contractInfo").innerHTML = "尚未叫牌";
+    }
     return;
   }
   const secretaryCard = game.secretaryCardId ? findCardById(game.secretaryCardId) : null;
@@ -1506,25 +1521,43 @@ function renderScores(game) {
 
 function renderSeats(game) {
   const mine = myGameSeat(game);
+  const biddingHighest = game.phase === PHASE.BIDDING ? (game.bidding?.highest || null) : null;
   for (let seat = 0; seat < 5; seat += 1) {
     const p = game.players[seat];
     const el = $(`seat${seat}`);
     const current = game.currentPlayer === seat ? "current" : "";
     const isMine = mine === seat ? "mine" : "";
-    el.className = `seat seat-${seat} ${current} ${isMine}`;
+    const biddingTurn = game.phase === PHASE.BIDDING && game.currentPlayer === seat ? "bidding-turn" : "";
+    const bidLeader = biddingHighest && biddingHighest.seat === seat ? "bid-leader" : "";
+    el.className = `seat seat-${seat} ${current} ${isMine} ${biddingTurn} ${bidLeader}`;
     const tags = [];
     const capturedHeads = countPoints(game.captured?.[seat] || []);
     tags.push(`<span class="tag">${p.hand?.length || 0} 張</span>`);
     tags.push(`<span class="tag">吃 ${capturedHeads} 頭</span>`);
     if (p.type === "bot") tags.push(`<span class="tag gold">電腦</span>`);
+    if (game.phase === PHASE.BIDDING && game.currentPlayer === seat) tags.push(`<span class="tag call-active">輪到叫牌</span>`);
+    if (biddingHighest && biddingHighest.seat === seat) tags.push(`<span class="tag call-high">最高 ${escapeHtml(formatBid(biddingHighest))}</span>`);
     if (p.seat === game.napoleon) tags.push(`<span class="tag danger">拿破崙</span>`);
     if (p.seat === game.secretaryOwner && game.secretaryRevealed) tags.push(`<span class="tag gold">秘書</span>`);
-    if (game.phase === PHASE.BIDDING && p.lastBid !== null && p.lastBid !== undefined) tags.push(`<span class="tag">${p.lastBid}</span>`);
+    if (game.phase === PHASE.BIDDING && p.lastBid !== null && p.lastBid !== undefined && (!biddingHighest || biddingHighest.seat !== seat || p.lastBid === "Pass")) tags.push(`<span class="tag">${escapeHtml(p.lastBid)}</span>`);
     el.innerHTML = `<div class="player-name">${escapeHtml(p.name)}${mine === seat ? "（你）" : ""}</div><div class="player-meta">${tags.join("")}</div>`;
   }
 }
 
 function renderTrick(game) {
+  if (game.phase === PHASE.BIDDING) {
+    for (let seat = 0; seat < 5; seat += 1) {
+      const holder = $(`play${seat}`);
+      if (!holder) continue;
+      holder.innerHTML = "";
+      holder.classList.add("empty");
+      holder.classList.remove("leading");
+    }
+    $("trickArea").innerHTML = renderBiddingStatus(game);
+    $("kittyArea").textContent = `底牌：${game.kitty?.length || 4} 張`;
+    return;
+  }
+
   const bestPlay = currentBestTrickPlay(game);
   for (let seat = 0; seat < 5; seat += 1) {
     const holder = $(`play${seat}`);
@@ -1560,6 +1593,29 @@ function renderTrick(game) {
     ? `你已拿起底牌，請蓋掉 4 張。`
     : (game.buried?.length ? `底牌已蓋牌：${game.buried.length} 張` : `底牌：${game.kitty?.length || 4} 張`);
   $("kittyArea").textContent = kittyText;
+}
+
+function renderBiddingStatus(game) {
+  const current = game.currentPlayer !== null && game.currentPlayer !== undefined ? game.players?.[game.currentPlayer]?.name : "-";
+  const high = game.bidding?.highest || null;
+  const highPlayer = high ? game.players?.[high.seat]?.name : null;
+  const passCount = high ? (game.bidding?.consecutivePasses || 0) : (game.bidding?.passesWithoutBid || 0);
+  const passNeed = high ? 4 : 5;
+  return `
+    <div class="bid-status">
+      <div class="bid-current">
+        <span>現在輪到</span>
+        <b>${escapeHtml(current)}</b>
+        <em>叫牌</em>
+      </div>
+      <div class="bid-highlight">
+        <span>目前最高叫品</span>
+        <strong>${escapeHtml(formatBid(high))}</strong>
+        <small>${highPlayer ? `${escapeHtml(highPlayer)} 領先` : "尚未有人叫牌"}</small>
+      </div>
+      <div class="bid-pass-count">連續 Pass：${passCount}/${passNeed}</div>
+    </div>
+  `;
 }
 
 
@@ -1639,7 +1695,11 @@ function renderActions(game) {
     return;
   }
   if (!myTurn) {
-    el.innerHTML = `<p class="hint">等待 ${escapeHtml(game.players[game.currentPlayer]?.name || "其他玩家")} 操作。</p>`;
+    if (game.phase === PHASE.BIDDING) {
+      el.innerHTML = `<div class="action-bid-banner">${renderBiddingStatus(game)}</div><p class="hint">等待 ${escapeHtml(game.players[game.currentPlayer]?.name || "其他玩家")} 叫牌。</p>`;
+    } else {
+      el.innerHTML = `<p class="hint">等待 ${escapeHtml(game.players[game.currentPlayer]?.name || "其他玩家")} 操作。</p>`;
+    }
     return;
   }
   if (game.phase === PHASE.BIDDING) {
@@ -1648,7 +1708,7 @@ function renderActions(game) {
     const bidControl = options.length
       ? `<label class="field"><span>叫牌</span><select id="bidSelect">${options.join("")}</select></label><button id="btnBid" class="primary">叫牌</button>`
       : `<p class="hint">已是最高叫品，只能 Pass。</p>`;
-    el.innerHTML = `<p class="hint">目前最高：${formatBid(game.bidding?.highest)}。同數字花色大小：♣ < ♦ < ♥ < ♠${game.settings?.trumpMode === "allowNoTrump" ? " < 無王" : ""}。</p><div class="inline">${bidControl}<button id="btnPass" class="ghost">Pass</button></div>`;
+    el.innerHTML = `<div class="action-bid-banner">${renderBiddingStatus(game)}</div><p class="hint">同數字花色大小：♣ < ♦ < ♥ < ♠${game.settings?.trumpMode === "allowNoTrump" ? " < 無王" : ""}。</p><div class="inline">${bidControl}<button id="btnPass" class="ghost">Pass</button></div>`;
     $("btnBid")?.addEventListener("click", () => {
       const [amount, suit] = $("bidSelect").value.split("|");
       submitAction("bid", { amount: Number(amount), suit });

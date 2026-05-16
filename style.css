@@ -687,3 +687,149 @@ body.offline-game #btnLeave { display: none !important; }
   .result-card { padding: 1rem; border-radius: 24px; }
   .result-stats { grid-template-columns: 1fr; gap: 0.45rem; }
 }
+
+/* Bidding highlights */
+.seat.bidding-turn {
+  border-color: rgba(255, 255, 255, 0.95);
+  box-shadow:
+    0 0 0 5px rgba(255, 255, 255, 0.58),
+    0 0 0 10px rgba(214, 158, 46, 0.24),
+    0 18px 38px rgba(20, 48, 68, 0.22);
+  animation: biddingPulse 1.08s ease-in-out infinite;
+  z-index: 6;
+}
+.seat.bid-leader:not(.bidding-turn) {
+  border-color: rgba(214, 158, 46, 0.52);
+  box-shadow: 0 0 0 4px rgba(214, 158, 46, 0.18), 0 12px 28px rgba(20, 48, 68, 0.14);
+}
+.seat.bidding-turn .player-name::after {
+  content: " 叫牌中";
+  display: inline-flex;
+  margin-left: 0.35rem;
+  padding: 0.08rem 0.34rem;
+  border-radius: 999px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--gold), #f0b84a);
+  font-size: 0.66rem;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+}
+.tag.call-active {
+  color: #fff;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  border-color: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 6px 14px rgba(8, 126, 164, 0.2);
+}
+.tag.call-high {
+  color: #633d00;
+  background: linear-gradient(135deg, rgba(255, 244, 207, 0.98), rgba(255, 209, 102, 0.78));
+  border-color: rgba(214, 158, 46, 0.42);
+  box-shadow: 0 5px 12px rgba(214, 158, 46, 0.18);
+}
+.bid-status {
+  display: grid;
+  gap: 0.75rem;
+  place-items: center;
+  text-align: center;
+  color: #fff;
+  text-shadow: 0 1px 10px rgba(7, 32, 45, 0.26);
+}
+.bid-current,
+.bid-highlight {
+  display: grid;
+  gap: 0.18rem;
+  justify-items: center;
+}
+.bid-current span,
+.bid-highlight span,
+.bid-highlight small,
+.bid-pass-count {
+  font-size: 0.78rem;
+  font-weight: 850;
+  opacity: 0.9;
+}
+.bid-current b {
+  font-size: clamp(1.35rem, 3vw, 2.15rem);
+  line-height: 1.05;
+}
+.bid-current em {
+  font-style: normal;
+  display: inline-flex;
+  padding: 0.18rem 0.58rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  font-weight: 900;
+}
+.bid-highlight {
+  min-width: min(320px, 92%);
+  padding: 0.72rem 1rem;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 12px 28px rgba(7, 32, 45, 0.1);
+}
+.bid-highlight strong {
+  font-size: clamp(1.9rem, 4.6vw, 3.15rem);
+  line-height: 1;
+  color: #fff7d7;
+  text-shadow: 0 0 18px rgba(255, 231, 150, 0.38), 0 2px 10px rgba(7, 32, 45, 0.28);
+  animation: bidValueGlow 1.22s ease-in-out infinite alternate;
+}
+.bid-pass-count {
+  display: inline-flex;
+  padding: 0.18rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+}
+.action-bid-banner {
+  margin-bottom: 0.75rem;
+  padding: 0.8rem;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(8, 126, 164, 0.9), rgba(46, 196, 182, 0.75));
+  box-shadow: 0 12px 26px rgba(8, 126, 164, 0.18);
+}
+.action-bid-banner .bid-status { gap: 0.5rem; }
+.action-bid-banner .bid-current b { font-size: 1.25rem; }
+.action-bid-banner .bid-highlight { padding: 0.55rem 0.75rem; min-width: 0; width: 100%; }
+.action-bid-banner .bid-highlight strong { font-size: 1.75rem; }
+.bid-mini {
+  display: grid;
+  gap: 0.18rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.bid-mini:last-child { border-bottom: 0; }
+.bid-mini span,
+.bid-mini small { color: var(--muted); font-weight: 750; }
+.bid-mini b { font-size: 1.35rem; }
+.bid-mini.emphasized {
+  margin-top: 0.45rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(214, 158, 46, 0.28);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(255, 244, 207, 0.88), rgba(255, 255, 255, 0.54));
+}
+.bid-mini.emphasized b {
+  color: #8a5b0a;
+  font-size: 1.65rem;
+}
+@keyframes biddingPulse {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-3px) scale(1.025); }
+}
+@keyframes bidValueGlow {
+  from { filter: drop-shadow(0 0 0 rgba(255, 231, 150, 0)); }
+  to { filter: drop-shadow(0 0 10px rgba(255, 231, 150, 0.62)); }
+}
+
+@media (max-width: 720px) {
+  .seat.bidding-turn { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.62), 0 0 0 7px rgba(214, 158, 46, 0.24), 0 8px 20px rgba(20, 48, 68, 0.18); }
+  .seat.bidding-turn .player-name::after { font-size: 0.55rem; padding: 0.06rem 0.24rem; }
+  .bid-status { gap: 0.46rem; }
+  .bid-highlight { padding: 0.55rem 0.7rem; min-width: min(240px, 92%); }
+  .bid-highlight strong { font-size: 1.65rem; }
+  .bid-current b { font-size: 1.2rem; }
+  .bid-current span, .bid-highlight span, .bid-highlight small, .bid-pass-count { font-size: 0.68rem; }
+}
