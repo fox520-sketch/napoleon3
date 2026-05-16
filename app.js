@@ -1525,16 +1525,26 @@ function renderSeats(game) {
 }
 
 function renderTrick(game) {
+  const bestPlay = currentBestTrickPlay(game);
   for (let seat = 0; seat < 5; seat += 1) {
     const holder = $(`play${seat}`);
     if (!holder) continue;
     const play = (game.trick || []).find((item) => item.seat === seat);
     if (play) {
-      holder.innerHTML = `<div class="trick-card"><div class="play-card ${cardClass(play.card)}">${cardLabel(play.card)}</div><small>${escapeHtml(game.players[seat].name)}</small></div>`;
+      const isBest = bestPlay && bestPlay.seat === play.seat && bestPlay.card?.id === play.card?.id;
+      const bestLabel = game.pendingClear ? "本墩最大" : "目前最大";
+      holder.innerHTML = `
+        <div class="trick-card ${isBest ? "leading" : ""}">
+          ${isBest ? `<div class="lead-badge">${bestLabel}</div>` : ""}
+          <div class="play-card ${cardClass(play.card)}">${cardLabel(play.card)}</div>
+          <small>${escapeHtml(game.players[seat].name)}</small>
+        </div>`;
       holder.classList.remove("empty");
+      holder.classList.toggle("leading", Boolean(isBest));
     } else {
       holder.innerHTML = "";
       holder.classList.add("empty");
+      holder.classList.remove("leading");
     }
   }
 
@@ -1550,6 +1560,18 @@ function renderTrick(game) {
     ? `你已拿起底牌，請蓋掉 4 張。`
     : (game.buried?.length ? `底牌已蓋牌：${game.buried.length} 張` : `底牌：${game.kitty?.length || 4} 張`);
   $("kittyArea").textContent = kittyText;
+}
+
+
+function currentBestTrickPlay(game) {
+  const trick = game?.trick || [];
+  if (!trick.length) return null;
+  const leadSuit = effectiveLeadSuit(trick);
+  let best = trick[0];
+  for (const play of trick.slice(1)) {
+    if (cardStrength(play.card, game, leadSuit) > cardStrength(best.card, game, leadSuit)) best = play;
+  }
+  return best;
 }
 
 function renderHand(game) {

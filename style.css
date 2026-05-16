@@ -301,7 +301,40 @@ input:focus, select:focus, textarea:focus { border-color: rgba(8, 126, 164, 0.55
 .card-btn.selected { outline: 4px solid rgba(46, 196, 182, 0.5); transform: translateY(-8px); }
 .card-btn.illegal { opacity: 0.42; cursor: not-allowed; }
 .play-card { width: 72px; height: 98px; }
-.trick-card { display: grid; gap: 0.35rem; justify-items: center; color: #fff; font-weight: 800; }
+.trick-card {
+  position: relative;
+  display: grid;
+  gap: 0.35rem;
+  justify-items: center;
+  color: #fff;
+  font-weight: 800;
+  transition: transform 0.18s ease, filter 0.18s ease;
+}
+.trick-card.leading {
+  transform: translateY(-6px) scale(1.08);
+  filter: drop-shadow(0 0 18px rgba(255, 255, 255, 0.75));
+  z-index: 5;
+}
+.trick-card.leading .play-card {
+  border: 3px solid rgba(255, 255, 255, 0.98);
+  outline: 4px solid rgba(255, 214, 102, 0.92);
+  box-shadow: 0 0 0 7px rgba(8, 126, 164, 0.22), 0 18px 28px rgba(7, 32, 45, 0.24);
+}
+.lead-badge {
+  position: absolute;
+  top: -1.45rem;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  color: #17324a;
+  background: linear-gradient(135deg, #fff7c6, #ffffff);
+  border: 1px solid rgba(255, 214, 102, 0.95);
+  box-shadow: 0 8px 18px rgba(7, 32, 45, 0.18);
+  font-size: 0.72rem;
+  font-weight: 950;
+}
 .actions { display: grid; gap: 0.65rem; }
 .actions .inline { display: flex; gap: 0.55rem; flex-wrap: wrap; }
 .actions input, .actions select { margin-bottom: 0.45rem; }
@@ -392,6 +425,9 @@ code { background: rgba(8, 126, 164, 0.1); padding: 0.08rem 0.28rem; border-radi
   .trick-area { min-height: 84px; gap: 0.4rem; }
   .trick-card { gap: 0.2rem; font-size: 0.76rem; }
   .play-card { width: 48px; height: 68px; border-radius: 10px; font-size: 0.78rem; }
+  .trick-card.leading { transform: translateY(-4px) scale(1.05); }
+  .trick-card.leading .play-card { outline-width: 3px; box-shadow: 0 0 0 5px rgba(8, 126, 164, 0.18), 0 12px 20px rgba(7, 32, 45, 0.2); }
+  .lead-badge { top: -1.25rem; padding: 0.16rem 0.42rem; font-size: 0.62rem; }
   .kitty-area { font-size: 0.95rem; }
 
   .hand-panel {
