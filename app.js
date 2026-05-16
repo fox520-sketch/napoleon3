@@ -639,8 +639,8 @@ function createGame(lobbyPlayers, settings, dealer = 0, scores = [0, 0, 0, 0, 0]
     captured: [[], [], [], [], []],
     requestedId: null,
     pendingClear: null,
-    bidding: { highest: null, turn: dealer },
-    log: [`第 ${dealer + 1} 家先叫牌。最低 9 頭，最高者成為拿破崙。`],
+    bidding: { highest: null, turn: dealer, consecutivePasses: 0, passesWithoutBid: 0 },
+    log: [`第 ${dealer + 1} 家先叫牌。最低 9 頭，叫品為「數字＋花色」，同數字依橋牌花色大小 ♣ < ♦ < ♥ < ♠ 比較。`],
     createdAt: Date.now()
   };
 }
@@ -741,7 +741,7 @@ function applyAction(game, action) {
 
   if (game.phase === PHASE.BIDDING && game.currentPlayer === seat) {
     if (action.type === "pass") return passBid(game, seat);
-    if (action.type === "bid") return makeBid(game, seat, Number(action.payload?.amount));
+    if (action.type === "bid") return makeBid(game, seat, action.payload);
   }
   if (game.phase === PHASE.TRUMP && game.napoleon === seat && action.type === "chooseTrump") {
     return chooseTrump(game, seat, action.payload?.trump);
@@ -758,39 +758,88 @@ function applyAction(game, action) {
   return false;
 }
 
+function allowedBidSuits(settings) {
+  const suits = ["C", "D", "H", "S"];
+  if (settings?.trumpMode === "allowNoTrump") suits.push("NT");
+  return suits;
+}
+
+function bidValue(bid) {
+  if (!bid) return 0;
+  const amount = Number(bid.amount || 0);
+  const suit = bid.suit || bid.trump || null;
+  const order = SUITS[suit]?.order || 0;
+  return amount * 10 + order;
+}
+
+function normalizeBidPayload(payload) {
+  if (!payload) return null;
+  if (typeof payload === "number") return { amount: payload, suit: "S" };
+  const amount = Number(payload.amount);
+  const suit = payload.suit || payload.trump;
+  if (!Number.isInteger(amount) || amount < 9 || amount > 16 || !SUITS[suit]) return null;
+  return { amount, suit };
+}
+
+function formatBid(bid) {
+  if (!bid) return "-";
+  const amount = Number(bid.amount || bid);
+  const suit = bid.suit || bid.trump || null;
+  return suit ? `${amount} ${suitName(suit)}` : `${amount} 頭`;
+}
+
+function getBidAmount(game) {
+  if (typeof game.bid === "number") return game.bid;
+  return Number(game.bid?.amount || game.bidAmount || game.bidding?.highest?.amount || 0);
+}
+
+function legalBidsAbove(highest, settings) {
+  const suits = allowedBidSuits(settings);
+  const highValue = bidValue(highest);
+  const bids = [];
+  for (let amount = 9; amount <= 16; amount += 1) {
+    for (const suit of suits) {
+      const bid = { amount, suit };
+      if (bidValue(bid) > highValue) bids.push(bid);
+    }
+  }
+  return bids;
+}
+
 function passBid(game, seat) {
   const p = game.players[seat];
-  p.passed = true;
+  if (!game.bidding) game.bidding = { highest: null, turn: game.currentPlayer, consecutivePasses: 0, passesWithoutBid: 0 };
   p.lastBid = "Pass";
+  if (game.bidding.highest) game.bidding.consecutivePasses = (game.bidding.consecutivePasses || 0) + 1;
+  else game.bidding.passesWithoutBid = (game.bidding.passesWithoutBid || 0) + 1;
   appendLog(game, `${p.name} Pass。`);
-  return advanceBidding(game);
-}
 
-function makeBid(game, seat, amount) {
-  const high = game.bidding?.highest?.amount || 8;
-  if (!Number.isInteger(amount) || amount < 9 || amount > 16 || amount <= high) return false;
-  const p = game.players[seat];
-  p.lastBid = amount;
-  game.bidding.highest = { seat, amount };
-  appendLog(game, `${p.name} 叫 ${amount} 頭。`);
-  if (amount === 16) return finishBidding(game);
-  return advanceBidding(game);
-}
-
-function advanceBidding(game) {
-  const active = game.players.filter((p) => !p.passed);
-  if (game.bidding.highest && active.length <= 1) return finishBidding(game);
-  if (!game.bidding.highest && active.length === 0) {
+  if (game.bidding.highest && game.bidding.consecutivePasses >= 4) return finishBidding(game);
+  if (!game.bidding.highest && game.bidding.passesWithoutBid >= 5) {
     game.phase = PHASE.ROUND_END;
     game.currentPlayer = null;
     appendLog(game, "全部 Pass，本局流局。房主可開始下一局。");
     return true;
   }
-  let next = (game.currentPlayer + 1) % 5;
-  for (let guard = 0; guard < 5; guard += 1) {
-    if (!game.players[next].passed) break;
-    next = (next + 1) % 5;
-  }
+  return advanceBidding(game);
+}
+
+function makeBid(game, seat, payload) {
+  if (!game.bidding) game.bidding = { highest: null, turn: game.currentPlayer, consecutivePasses: 0, passesWithoutBid: 0 };
+  const bid = normalizeBidPayload(payload);
+  if (!bid) return false;
+  if (!allowedBidSuits(game.settings).includes(bid.suit)) return false;
+  if (bidValue(bid) <= bidValue(game.bidding.highest)) return false;
+  const p = game.players[seat];
+  p.lastBid = formatBid(bid);
+  game.bidding.highest = { seat, amount: bid.amount, suit: bid.suit };
+  game.bidding.consecutivePasses = 0;
+  appendLog(game, `${p.name} 叫 ${formatBid(bid)}。`);
+  return advanceBidding(game);
+}
+
+function advanceBidding(game) {
+  const next = (game.currentPlayer + 1) % 5;
   game.currentPlayer = next;
   game.bidding.turn = next;
   return true;
@@ -800,11 +849,15 @@ function finishBidding(game) {
   const high = game.bidding.highest;
   if (!high) return false;
   game.napoleon = high.seat;
-  game.bid = high.amount;
-  game.phase = PHASE.TRUMP;
+  game.bid = { amount: high.amount, suit: high.suit };
+  game.bidAmount = high.amount;
+  game.trump = high.suit;
+  game.phase = PHASE.EXCHANGE;
   game.currentPlayer = high.seat;
+  const player = game.players[high.seat];
+  player.hand = sortHand([...player.hand, ...(game.kitty || [])]);
   game.players.forEach((p) => { p.passed = false; });
-  appendLog(game, `${game.players[high.seat].name} 成為拿破崙，叫 ${high.amount} 頭。`);
+  appendLog(game, `${player.name} 成為拿破崙，叫 ${formatBid(high)}，${suitName(high.suit)} 為王牌，拿起 4 張底牌。`);
   return true;
 }
 
@@ -833,7 +886,7 @@ function exchangeCards(game, seat, cardIds) {
   player.hand = sortHand(player.hand.filter((c) => !ids.has(c.id)));
   game.buried = buried;
   const buriedHeads = countPoints(buried);
-  game.contract = Math.min(16, game.bid + (game.settings?.buriedMode === "addContract" ? buriedHeads : 0));
+  game.contract = Math.min(16, getBidAmount(game) + (game.settings?.buriedMode === "addContract" ? buriedHeads : 0));
   game.phase = PHASE.SECRETARY;
   game.currentPlayer = seat;
   appendLog(game, `${player.name} 蓋掉 4 張底牌；底牌有 ${buriedHeads} 張頭，成約為 ${game.contract} 頭。`);
@@ -974,21 +1027,15 @@ function cardStrength(card, game, leadSuit) {
 }
 
 function endRound(game) {
-  const teamSeats = new Set([game.napoleon]);
-  if (game.secretaryOwner !== null && game.secretaryOwner !== undefined) teamSeats.add(game.secretaryOwner);
-  let teamHeads = 0;
-  let defenderHeads = 0;
-  game.captured.forEach((cards, seat) => {
-    const heads = countPoints(cards || []);
-    if (teamSeats.has(seat)) teamHeads += heads;
-    else defenderHeads += heads;
-  });
-  const buriedHeads = countPoints(game.buried || []);
-  if (game.settings?.buriedMode === "defenders") defenderHeads += buriedHeads;
-  else if (game.settings?.buriedMode !== "addContract") teamHeads += buriedHeads;
+  const totals = calculateHeadTotals(game);
+  const teamHeads = totals.teamHeads;
+  const defenderHeads = totals.defenderHeads;
+  const buriedHeads = totals.buriedHeads;
+  const contract = totals.contract;
+  game.contract = contract;
 
-  const made = teamHeads >= game.contract;
-  const diff = Math.abs(teamHeads - game.contract);
+  const made = teamHeads >= contract;
+  const diff = Math.abs(teamHeads - contract);
   const solo = game.secretaryOwner === game.napoleon;
   const base = (solo ? 160 : 100) + diff * 10;
   const napDelta = made ? base : -base;
@@ -1008,14 +1055,14 @@ function endRound(game) {
     teamHeads,
     defenderHeads,
     buriedHeads,
-    contract: game.contract,
+    contract,
     scoreDeltas,
     endedAt: Date.now()
   };
   game.phase = PHASE.ROUND_END;
   game.currentPlayer = null;
   game.secretaryRevealed = true;
-  appendLog(game, `${made ? "拿破崙軍達標" : "聯合國守成"}：拿破崙軍 ${teamHeads} 頭，成約 ${game.contract} 頭。`);
+  appendLog(game, `${made ? "拿破崙軍達標" : "聯合國守成"}：拿破崙軍 ${teamHeads} 頭，成約 ${contract} 頭。`);
 }
 
 async function saveGame(game) {
@@ -1090,20 +1137,42 @@ function getBotAction(game) {
 
 function aiBidAction(game, seat) {
   const player = game.players[seat];
-  const high = game.bidding?.highest?.amount || 8;
+  const highest = game.bidding?.highest || null;
   const difficulty = game.settings?.difficulty || 10;
   const estimate = estimateHand(player.hand, game.settings);
   const caution = (21 - difficulty) * 0.035;
   const noise = (Math.random() - 0.5) * Math.max(0.15, (21 - difficulty) / 18);
   const ceiling = Math.max(8, Math.min(16, Math.floor(estimate - caution + noise)));
-  if (ceiling <= high || ceiling < 9) return { uid: player.uid, seat, type: "pass", payload: {} };
+  if (ceiling < 9) return { uid: player.uid, seat, type: "pass", payload: {} };
 
-  // 電腦改採保守遞叫：通常只加一頭；牌力明顯超過時，高難度才偶爾跳叫。
-  let amount = high + 1;
-  if (difficulty >= 14 && ceiling >= high + 3 && Math.random() < (difficulty - 12) / 18) amount = high + 2;
-  if (difficulty >= 18 && ceiling >= high + 4 && Math.random() < 0.18) amount = high + 3;
-  amount = Math.min(amount, ceiling, 16);
-  return { uid: player.uid, seat, type: "bid", payload: { amount } };
+  const suitScores = aiSuitScores(player.hand);
+  const legal = legalBidsAbove(highest, game.settings).filter((b) => b.amount <= ceiling);
+  if (!legal.length) return { uid: player.uid, seat, type: "pass", payload: {} };
+
+  const preferredSuit = Object.entries(suitScores)
+    .filter(([s]) => allowedBidSuits(game.settings).includes(s))
+    .sort((a, b) => b[1] - a[1])[0]?.[0] || "S";
+
+  // 叫品現在是「數字＋花色」：電腦先找最低可蓋過目前叫品的安全叫品，
+  // 再偏好自己牌型較好的花色；高難度且牌力充足時才小幅跳叫。
+  let candidates = legal.filter((b) => b.amount === legal[0].amount);
+  let bid = candidates.find((b) => b.suit === preferredSuit) || candidates.sort((a, b) => suitScores[b.suit] - suitScores[a.suit])[0];
+  if (difficulty >= 15 && ceiling >= bid.amount + 2 && Math.random() < (difficulty - 12) / 20) {
+    const jumpAmount = Math.min(ceiling, bid.amount + 1);
+    const jump = legal.find((b) => b.amount === jumpAmount && b.suit === preferredSuit) || legal.find((b) => b.amount === jumpAmount);
+    if (jump) bid = jump;
+  }
+
+  return { uid: player.uid, seat, type: "bid", payload: bid };
+}
+
+function aiSuitScores(hand) {
+  const scores = { S: 0, H: 0, D: 0, C: 0, NT: 0 };
+  for (const card of hand) {
+    if (card.joker) scores.NT += 3.4;
+    else scores[card.suit] += card.value + (card.point ? 2.5 : 0);
+  }
+  return scores;
 }
 
 function estimateHand(hand, settings) {
@@ -1135,14 +1204,10 @@ function estimateHand(hand, settings) {
 }
 
 function aiChooseTrump(game, seat) {
-  const hand = game.players[seat].hand;
-  const scores = { S: 0, H: 0, D: 0, C: 0, NT: 0 };
-  for (const card of hand) {
-    if (card.joker) scores.NT += 2.5;
-    else scores[card.suit] += card.value + (card.point ? 2 : 0);
-  }
-  let best = Object.entries(scores).filter(([s]) => game.settings?.trumpMode === "allowNoTrump" || s !== "NT").sort((a, b) => b[1] - a[1])[0][0];
-  return best;
+  const scores = aiSuitScores(game.players[seat].hand);
+  return Object.entries(scores)
+    .filter(([s]) => allowedBidSuits(game.settings).includes(s))
+    .sort((a, b) => b[1] - a[1])[0][0];
 }
 
 function aiChooseBuried(game, seat) {
@@ -1274,28 +1339,39 @@ function teamOf(game, seat) {
   return "def";
 }
 
-function calculateRoundResult(game) {
-  if (!game || game.napoleon === null || game.napoleon === undefined || !game.contract) return null;
+function calculateHeadTotals(game) {
+  const bidAmount = getBidAmount(game);
+  const buriedHeads = countPoints(game?.buried || []);
+  const rawContract = game?.settings?.buriedMode === "addContract"
+    ? bidAmount + buriedHeads
+    : (Number(game?.contract || 0) || bidAmount);
+  const contract = Math.min(16, rawContract);
   const teamSeats = new Set([game.napoleon]);
   if (game.secretaryOwner !== null && game.secretaryOwner !== undefined) teamSeats.add(game.secretaryOwner);
   let teamHeads = 0;
   let defenderHeads = 0;
   (game.captured || []).forEach((cards, seat) => {
     const heads = countPoints(cards || []);
-    if (teamSeats.has(seat)) teamHeads += heads;
+    if (teamSeats.has(Number(seat))) teamHeads += heads;
     else defenderHeads += heads;
   });
-  const buriedHeads = countPoints(game.buried || []);
   if (game.settings?.buriedMode === "defenders") defenderHeads += buriedHeads;
   else if (game.settings?.buriedMode !== "addContract") teamHeads += buriedHeads;
-  const made = teamHeads >= game.contract;
+  return { teamHeads, defenderHeads, buriedHeads, contract };
+}
+
+function calculateRoundResult(game) {
+  if (!game || game.napoleon === null || game.napoleon === undefined) return null;
+  const totals = calculateHeadTotals(game);
+  if (!totals.contract) return null;
+  const made = totals.teamHeads >= totals.contract;
   return {
     made,
     winningTeam: made ? "nap" : "def",
-    teamHeads,
-    defenderHeads,
-    buriedHeads,
-    contract: game.contract,
+    teamHeads: totals.teamHeads,
+    defenderHeads: totals.defenderHeads,
+    buriedHeads: totals.buriedHeads,
+    contract: totals.contract,
     scoreDeltas: game.roundResult?.scoreDeltas || [],
     endedAt: game.roundResult?.endedAt || game.createdAt || Date.now()
   };
@@ -1323,7 +1399,8 @@ function renderRoundResultAnimation(game) {
     return;
   }
   const seat = myGameSeat(game);
-  const result = game.roundResult || calculateRoundResult(game);
+  // 永遠從實際吃牌與底牌重新計算頭數；舊版 roundResult 只保留分數與時間，避免顯示成 2/11 這類舊統計錯誤。
+  const result = calculateRoundResult(game) || game.roundResult;
   if (seat === null || !result) {
     overlay.classList.remove("show", "win", "lose");
     overlay.classList.add("hidden");
@@ -1375,7 +1452,7 @@ function renderGame() {
 function renderPhase(game) {
   const titles = {
     [PHASE.BIDDING]: "叫牌",
-    [PHASE.TRUMP]: "選王牌",
+    [PHASE.TRUMP]: "確認王牌",
     [PHASE.EXCHANGE]: "換底牌",
     [PHASE.SECRETARY]: "指定秘書牌",
     [PHASE.PLAY]: "出牌",
@@ -1389,9 +1466,9 @@ function renderPhase(game) {
   }
   const current = game.currentPlayer !== null && game.currentPlayer !== undefined ? game.players[game.currentPlayer]?.name : "";
   const helps = {
-    [PHASE.BIDDING]: `輪到 ${current} 叫牌。最低 9 頭，須高於目前最高叫品。`,
+    [PHASE.BIDDING]: `輪到 ${current} 叫牌。叫「數字＋花色」，同數字依 ♣ < ♦ < ♥ < ♠ 比較；叫牌後其他 4 家都 Pass 才結束。`,
     [PHASE.TRUMP]: `拿破崙 ${current} 選擇王牌。`,
-    [PHASE.EXCHANGE]: "拿破崙拿起底牌後，選 4 張蓋牌棄出。",
+    [PHASE.EXCHANGE]: "拿破崙已依最高叫品決定王牌並拿起底牌，請選 4 張蓋牌棄出。",
     [PHASE.SECRETARY]: "拿破崙指定一張秘書牌；持有者暗中同隊。",
     [PHASE.PLAY]: `第 ${game.trickNo + 1} 墩，輪到 ${current} 出牌。`,
     [PHASE.ROUND_END]: "本局已結束，房主可開始下一局。"
@@ -1410,7 +1487,7 @@ function renderContract(game) {
     : (secretaryCard ? `${cardLong(secretaryCard)}（未公開）` : "未指定");
   $("contractInfo").innerHTML = `
     <div><b>拿破崙：</b>${escapeHtml(game.players[game.napoleon].name)}</div>
-    <div><b>叫牌／成約：</b>${game.bid || "-"} / ${game.contract || "-"} 頭</div>
+    <div><b>叫牌／成約：</b>${formatBid(game.bid || game.bidding?.highest)} / ${game.contract || "-"} 頭</div>
     <div><b>王牌：</b>${suitName(game.trump)}</div>
     <div><b>秘書：</b>${secretaryText}</div>
     <div><b>底牌頭：</b>${countPoints(game.buried || [])}</div>
@@ -1544,11 +1621,16 @@ function renderActions(game) {
     return;
   }
   if (game.phase === PHASE.BIDDING) {
-    const high = game.bidding?.highest?.amount || 8;
-    const options = [];
-    for (let i = high + 1; i <= 16; i += 1) options.push(`<option value="${i}">${i} 頭</option>`);
-    el.innerHTML = `<label class="field"><span>叫牌</span><select id="bidSelect">${options.join("")}</select></label><div class="inline"><button id="btnBid" class="primary">叫牌</button><button id="btnPass" class="ghost">Pass</button></div>`;
-    $("btnBid").addEventListener("click", () => submitAction("bid", { amount: Number($("bidSelect").value) }));
+    const bids = legalBidsAbove(game.bidding?.highest || null, game.settings);
+    const options = bids.map((b) => `<option value="${b.amount}|${b.suit}">${formatBid(b)}</option>`);
+    const bidControl = options.length
+      ? `<label class="field"><span>叫牌</span><select id="bidSelect">${options.join("")}</select></label><button id="btnBid" class="primary">叫牌</button>`
+      : `<p class="hint">已是最高叫品，只能 Pass。</p>`;
+    el.innerHTML = `<p class="hint">目前最高：${formatBid(game.bidding?.highest)}。同數字花色大小：♣ < ♦ < ♥ < ♠${game.settings?.trumpMode === "allowNoTrump" ? " < 無王" : ""}。</p><div class="inline">${bidControl}<button id="btnPass" class="ghost">Pass</button></div>`;
+    $("btnBid")?.addEventListener("click", () => {
+      const [amount, suit] = $("bidSelect").value.split("|");
+      submitAction("bid", { amount: Number(amount), suit });
+    });
     $("btnPass").addEventListener("click", () => submitAction("pass"));
     return;
   }
@@ -1615,8 +1697,16 @@ function suitName(suit) {
   return SUITS[suit]?.name || "未定";
 }
 
+function isHeadCard(card) {
+  if (!card) return false;
+  if (card.point === true) return true;
+  if (POINT_RANKS.has(card.rank)) return true;
+  const id = String(card.id || "");
+  return /^(S|H|D|C)(A|K|Q|J)$/.test(id);
+}
+
 function countPoints(cards) {
-  return (cards || []).filter((c) => c.point).length;
+  return (cards || []).filter(isHeadCard).length;
 }
 
 function findCardById(id) {
