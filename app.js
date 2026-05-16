@@ -1161,9 +1161,16 @@ function aiChoosePlay(game, seat) {
   const legal = legalCardsFor(game, seat);
   const player = game.players[seat];
   const difficulty = game.settings?.difficulty || 10;
-  if (Math.random() > difficulty / 22) return randomItem(legal);
   const myTeam = teamOf(game, seat);
   const sortedLow = [...legal].sort((a, b) => cardPlayValue(a, game) - cardPlayValue(b, game));
+
+  // 若啟用「末三輪鬼牌變小」，小鬼在第 8、9、10 墩會失去威力。
+  // 因此電腦在第 7 墩以前會依難度、目前墩況與剩餘時間評估是否先打出小鬼，
+  // 特別是第 7 墩是小鬼變小前的最後機會，會明顯提高出小鬼的意願。
+  const timelySmallJoker = aiConsiderSmallJokerBeforeLast3(game, seat, legal, sortedLow, myTeam, difficulty);
+  if (timelySmallJoker) return timelySmallJoker;
+
+  if (Math.random() > difficulty / 22) return randomItem(legal);
   if (game.trick.length === 0) {
     const strong = [...legal].sort((a, b) => cardPlayValue(b, game) - cardPlayValue(a, game));
     if (player.hand.filter((c) => c.point).length >= 3 && Math.random() < difficulty / 25) return strong[0];
@@ -1180,10 +1187,52 @@ function aiChoosePlay(game, seat) {
   return sortedLow[0];
 }
 
+function aiConsiderSmallJokerBeforeLast3(game, seat, legal, sortedLow, myTeam, difficulty) {
+  if (!game.settings?.jokerLowLast3) return null;
+  if (game.trickNo >= 7) return null;
+  const smallJoker = legal.find((c) => c.id === "RJ");
+  if (!smallJoker) return null;
+
+  const tricksUntilLow = 7 - game.trickNo; // 1 表示本墩是變小前最後機會。
+  const isLastChance = tricksUntilLow <= 1;
+  const urgency = Math.max(0, 4 - tricksUntilLow); // 越接近末三輪越高。
+  const pointCount = countPoints(game.trick.map((p) => p.card));
+  const currentWinner = currentTrickWinner(game);
+  const winnerTeam = currentWinner === null ? null : teamOf(game, currentWinner);
+  const smallWins = wouldWin(game, smallJoker);
+  const hasSaferLowCard = sortedLow.some((c) => c.id !== "RJ" && !c.point && !wouldWin(game, c));
+
+  if (game.trick.length === 0) {
+    // 領出時若手上有小鬼，越接近末三輪越傾向先確保它發揮威力。
+    const leadChance = isLastChance ? 0.9 : Math.min(0.55, 0.12 + urgency * 0.13 + difficulty / 80);
+    return Math.random() < leadChance ? smallJoker : null;
+  }
+
+  if (smallWins) {
+    // 對方暫時吃墩、或桌上已有頭時，小鬼提早出手的價值較高。
+    if (winnerTeam !== myTeam) return smallJoker;
+    if (pointCount > 0 && (isLastChance || Math.random() < 0.25 + difficulty / 80)) return smallJoker;
+    if (isLastChance && Math.random() < 0.65) return smallJoker;
+  }
+
+  // 最後機會且小鬼已無法贏時，如果能用低成本把小鬼脫手，避免留到末三輪變小。
+  if (isLastChance && !smallWins && hasSaferLowCard && Math.random() < 0.45 + difficulty / 70) {
+    return smallJoker;
+  }
+
+  return null;
+}
+
 function cardPlayValue(card, game) {
   let v = card.value;
   if (card.point) v += 12;
-  if (card.joker) v += card.bigJoker ? 45 : 40;
+  if (card.joker) {
+    if (game.settings?.jokerLowLast3 && game.trickNo >= 7) {
+      v += card.bigJoker ? 3 : 1;
+    } else {
+      v += card.bigJoker ? 45 : 40;
+    }
+  }
   if (game.trump && game.trump !== "NT" && card.suit === game.trump) v += 20;
   if (card.id === game.secretaryCardId) v += 100;
   return v;
