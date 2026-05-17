@@ -1243,32 +1243,230 @@ function cardSecretaryValue(card, game) {
 
 function aiChoosePlay(game, seat) {
   const legal = legalCardsFor(game, seat);
-  const player = game.players[seat];
-  const difficulty = game.settings?.difficulty || 10;
-  const myTeam = teamOf(game, seat);
+  if (!legal.length) return null;
+  const difficulty = Number(game.settings?.difficulty || 10);
   const sortedLow = [...legal].sort((a, b) => cardPlayValue(a, game) - cardPlayValue(b, game));
+  const myTeam = aiTeamView(game, seat, seat);
 
-  // 若啟用「末三輪鬼牌變小」，小鬼在第 8、9、10 墩會失去威力。
-  // 因此電腦在第 7 墩以前會依難度、目前墩況與剩餘時間評估是否先打出小鬼，
-  // 特別是第 7 墩是小鬼變小前的最後機會，會明顯提高出小鬼的意願。
+  // 低難度保留一點失誤；中高難度改由完整局勢評分決定。
+  if (difficulty <= 5 && Math.random() < 0.18) return randomItem(legal);
+
+  // 若啟用「末三輪鬼牌變小」，小鬼會在第 8 墩起失去威力。
+  // 因此電腦會在進入末三輪前評估是否先打出，尤其第 7 墩是最後機會。
   const timelySmallJoker = aiConsiderSmallJokerBeforeLast3(game, seat, legal, sortedLow, myTeam, difficulty);
   if (timelySmallJoker) return timelySmallJoker;
 
-  if (Math.random() > difficulty / 22) return randomItem(legal);
-  if (game.trick.length === 0) {
-    const strong = [...legal].sort((a, b) => cardPlayValue(b, game) - cardPlayValue(a, game));
-    if (player.hand.filter((c) => c.point).length >= 3 && Math.random() < difficulty / 25) return strong[0];
-    return sortedLow[0];
-  }
+  const context = aiBuildPlayContext(game, seat);
+  const scored = legal.map((card) => ({ card, score: aiScorePlayCard(game, seat, card, context) }));
+  return aiPickScoredCard(scored, difficulty);
+}
+
+function aiBuildPlayContext(game, seat) {
+  const totals = calculateHeadTotals(game) || { teamHeads: 0, defenderHeads: 0, contract: getBidAmount(game) || 9 };
+  const trickCards = (game.trick || []).map((p) => p.card);
+  const pointsOnTable = countPoints(trickCards);
+  const capturedHeads = totals.teamHeads + totals.defenderHeads;
+  const remainingHeads = Math.max(0, 16 - capturedHeads - pointsOnTable);
+  const napNeeds = Math.max(0, (totals.contract || getBidAmount(game) || 9) - totals.teamHeads);
+  const myTeam = aiTeamView(game, seat, seat);
   const currentWinner = currentTrickWinner(game);
-  const winnerTeam = currentWinner === null ? null : teamOf(game, currentWinner);
-  if (winnerTeam === myTeam) {
-    const point = sortedLow.find((c) => c.point && !wouldWin(game, c));
-    return point || sortedLow[0];
+  const currentWinnerTeam = currentWinner === null ? null : aiTeamView(game, currentWinner, seat);
+  const seatsAfterMe = Math.max(0, 4 - (game.trick?.length || 0));
+  const actingLast = (game.trick?.length || 0) === 4;
+  const late = (game.trickNo || 0) >= 7;
+  const player = game.players?.[seat] || { hand: [] };
+  const handHeads = countPoints(player.hand || []);
+  const trumpCount = game.trump && game.trump !== "NT" ? (player.hand || []).filter((c) => c.suit === game.trump).length : 0;
+  const napUrgency = aiClamp(napNeeds / Math.max(1, remainingHeads + pointsOnTable), 0, 1.6);
+  const defenderUrgency = aiClamp((5 - napNeeds) / 5, 0, 1.4);
+  return {
+    totals,
+    pointsOnTable,
+    remainingHeads,
+    napNeeds,
+    myTeam,
+    currentWinner,
+    currentWinnerTeam,
+    seatsAfterMe,
+    actingLast,
+    late,
+    handHeads,
+    trumpCount,
+    difficulty: Number(game.settings?.difficulty || 10),
+    leadSuit: effectiveLeadSuit(game.trick)
+  };
+}
+
+function aiScorePlayCard(game, seat, card, ctx) {
+  const trickLen = game.trick?.length || 0;
+  return trickLen === 0
+    ? aiScoreLeadCard(game, seat, card, ctx)
+    : aiScoreFollowCard(game, seat, card, ctx);
+}
+
+function aiScoreLeadCard(game, seat, card, ctx) {
+  const player = game.players?.[seat] || { hand: [] };
+  const base = cardPlayValue(card, game);
+  const isPoint = isHeadCard(card);
+  const isTrump = Boolean(game.trump && game.trump !== "NT" && card.suit === game.trump);
+  const isJoker = Boolean(card.joker);
+  const likelyWin = aiLikelyLeadWin(game, seat, card);
+  let score = 0;
+
+  // 領牌預設保守：不隨便裸丟頭牌、王牌、鬼牌；越後期越可以釋放大牌。
+  score -= base * 0.22;
+  if (isPoint) score -= 8;
+  if (isTrump) score -= 3.5;
+  if (isJoker) score -= 10;
+  if (ctx.late) score += base * 0.24 + (isPoint ? 4 : 0);
+
+  if (ctx.myTeam === "nap") {
+    // 拿破崙軍需要達標：缺頭越多、手上頭越多，越傾向先建立主動權。
+    const pressure = 8 + ctx.handHeads * 1.8 + ctx.napUrgency * 18;
+    score += likelyWin * pressure;
+    if (isPoint && likelyWin >= 0.72) score += 8 + ctx.napUrgency * 5;
+    if (isTrump && ctx.trumpCount >= 3) score += 4 + likelyWin * 4;
+    if (aiCanSummonUsefulJoker(game, seat, card)) score += 8 + ctx.difficulty * 0.45;
+  } else {
+    // 聯合國領牌以不送頭為先；拿破崙已接近成約時，會更積極用安全大牌攔截。
+    const blockPressure = 4 + ctx.defenderUrgency * 13;
+    score += likelyWin * blockPressure;
+    if (isPoint && likelyWin < 0.8) score -= 13;
+    if (!isPoint && !isTrump && !isJoker) score += 4;
+    if (ctx.defenderUrgency > 0.7 && likelyWin > 0.75) score += 5;
   }
-  const winners = sortedLow.filter((c) => wouldWin(game, c));
-  if (winners.length) return winners[0];
-  return sortedLow[0];
+
+  // 秘書牌是全局最大；暗秘書不宜無意義早早曝光，但必要時可搶頭。
+  if (!game.secretaryRevealed && card.id === game.secretaryCardId) {
+    score -= game.trickNo < 5 ? 22 : 8;
+    if (ctx.myTeam === "nap" && (ctx.napUrgency > 0.8 || ctx.handHeads >= 3)) score += 12;
+  }
+
+  // 末三輪鬼牌變小時，大鬼也不宜拖到太晚。
+  if (game.settings?.jokerLowLast3 && card.joker && game.trickNo >= 5 && game.trickNo < 7) {
+    score += card.bigJoker ? 10 : 4;
+  }
+  return score;
+}
+
+function aiScoreFollowCard(game, seat, card, ctx) {
+  const base = cardPlayValue(card, game);
+  const isPoint = isHeadCard(card);
+  const isTrump = Boolean(game.trump && game.trump !== "NT" && card.suit === game.trump);
+  const isJoker = Boolean(card.joker);
+  const candidateWins = wouldWin(game, card);
+  const allyWinning = ctx.currentWinnerTeam === ctx.myTeam;
+  const pointsWithCard = ctx.pointsOnTable + (isPoint ? 1 : 0);
+  const headWeight = 7 + ctx.difficulty * 0.55 + (ctx.myTeam === "nap" ? ctx.napUrgency * 10 : ctx.defenderUrgency * 10);
+  let score = 0;
+
+  if (allyWinning) {
+    if (candidateWins) {
+      // 盟友已經贏墩時，除非特殊需要，不要浪費更大的牌去蓋隊友。
+      score -= 18 + base * 0.34;
+      if (ctx.actingLast && isPoint) score -= 7;
+    } else {
+      // 盟友贏墩：可以墊頭；但若後面還有對手未出，墊頭會比較保守。
+      score += 9;
+      const feedBonus = ctx.actingLast ? 26 : Math.max(4, 16 - ctx.seatsAfterMe * 4);
+      if (isPoint) score += feedBonus;
+      if (isTrump || isJoker) score -= 5;
+      score -= base * 0.14;
+    }
+  } else {
+    if (candidateWins) {
+      // 對方暫時贏墩：桌上頭越多、越接近勝負關鍵，越該用最小成本吃回來。
+      score += 15 + pointsWithCard * headWeight;
+      if (ctx.myTeam === "nap") score += ctx.napUrgency * 12;
+      else score += ctx.defenderUrgency * 13;
+      score -= base * 0.30; // 在能吃的牌裡偏好最小牌。
+      if (isPoint) score += 5; // 自己的頭也會被一起收走。
+      if (ctx.actingLast) score += 4;
+    } else {
+      // 吃不回來：不要把頭送給對方，盡量丟低牌。
+      score += 3;
+      if (isPoint) score -= 18 + headWeight;
+      if (isTrump || isJoker) score -= 3;
+      score -= base * 0.09;
+    }
+  }
+
+  if (!game.secretaryRevealed && card.id === game.secretaryCardId) {
+    if (candidateWins && (!allyWinning || pointsWithCard >= 2 || ctx.late || ctx.napUrgency > 0.75)) {
+      score += 18 + pointsWithCard * 8;
+    } else {
+      score -= game.trickNo < 6 ? 25 : 10;
+    }
+  }
+
+  // 末三輪鬼牌變小：進入末三輪後不再把鬼牌當作超強王牌；末三輪前則避免浪費大鬼。
+  if (game.settings?.jokerLowLast3 && card.joker) {
+    if (game.trickNo >= 7) score -= card.bigJoker ? 4 : 8;
+    else if (game.trickNo <= 4 && ctx.pointsOnTable === 0 && !candidateWins) score -= 7;
+  }
+
+  return score;
+}
+
+function aiPickScoredCard(scored, difficulty) {
+  const spread = Math.max(0.8, (21 - difficulty) * 1.55);
+  const withNoise = scored.map((item) => ({
+    card: item.card,
+    score: item.score + (Math.random() - 0.5) * spread
+  })).sort((a, b) => b.score - a.score);
+
+  if (difficulty <= 8 && withNoise.length > 1 && Math.random() < 0.14) {
+    return randomItem(withNoise.slice(0, Math.min(3, withNoise.length))).card;
+  }
+  if (difficulty <= 13 && withNoise.length > 1 && Math.random() < 0.06) {
+    return withNoise[1].card;
+  }
+  return withNoise[0].card;
+}
+
+function aiLikelyLeadWin(game, seat, card) {
+  if (card.id === game.secretaryCardId) return 1;
+  if (card.joker && !(game.settings?.jokerLowLast3 && game.trickNo >= 7)) return card.bigJoker ? 0.96 : 0.9;
+  const leadSuit = card.joker ? null : card.suit;
+  const strength = cardStrength(card, game, leadSuit);
+  const unseen = aiUnseenCards(game, seat);
+  const stronger = unseen.filter((c) => cardStrength(c, game, leadSuit) > strength);
+  if (!stronger.length) return 0.92;
+
+  // 不是精算，只估計「後面 4 家剛好有更大牌且願意出」的風險。
+  const risk = aiClamp(stronger.length / Math.max(1, unseen.length), 0, 0.9);
+  const followers = 4;
+  return aiClamp(1 - risk * followers * 1.25, 0.08, 0.86);
+}
+
+function aiUnseenCards(game, seat) {
+  const known = new Set();
+  (game.players?.[seat]?.hand || []).forEach((c) => known.add(c.id));
+  (game.trick || []).forEach((p) => known.add(p.card?.id));
+  (game.captured || []).flat().forEach((c) => known.add(c.id));
+  // 底牌通常只有拿破崙知道；為避免電腦過度作弊，非拿破崙不把底牌視為已知。
+  if (seat === game.napoleon) (game.buried || []).forEach((c) => known.add(c.id));
+  return makeDeck().filter((c) => !known.has(c.id));
+}
+
+function aiTeamView(game, targetSeat, observerSeat) {
+  if (targetSeat === null || targetSeat === undefined) return null;
+  if (targetSeat === game.napoleon) return "nap";
+  if (game.secretaryRevealed) return teamOf(game, targetSeat);
+  // 拿破崙知道秘書是誰；秘書本人也知道自己同隊。其他電腦不偷看暗秘書。
+  if (observerSeat === game.napoleon || targetSeat === observerSeat) return teamOf(game, targetSeat);
+  return "def";
+}
+
+function aiCanSummonUsefulJoker(game, seat, card) {
+  const target = summonTargetForLead(game, card);
+  if (!target) return false;
+  const handIds = new Set((game.players?.[seat]?.hand || []).map((c) => c.id));
+  return !handIds.has(target);
+}
+
+function aiClamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function aiConsiderSmallJokerBeforeLast3(game, seat, legal, sortedLow, myTeam, difficulty) {
@@ -1282,13 +1480,13 @@ function aiConsiderSmallJokerBeforeLast3(game, seat, legal, sortedLow, myTeam, d
   const urgency = Math.max(0, 4 - tricksUntilLow); // 越接近末三輪越高。
   const pointCount = countPoints(game.trick.map((p) => p.card));
   const currentWinner = currentTrickWinner(game);
-  const winnerTeam = currentWinner === null ? null : teamOf(game, currentWinner);
+  const winnerTeam = currentWinner === null ? null : aiTeamView(game, currentWinner, seat);
   const smallWins = wouldWin(game, smallJoker);
-  const hasSaferLowCard = sortedLow.some((c) => c.id !== "RJ" && !c.point && !wouldWin(game, c));
+  const hasCheapAlternative = sortedLow.some((c) => c.id !== "RJ" && !c.point && !wouldWin(game, c));
 
   if (game.trick.length === 0) {
     // 領出時若手上有小鬼，越接近末三輪越傾向先確保它發揮威力。
-    const leadChance = isLastChance ? 0.9 : Math.min(0.55, 0.12 + urgency * 0.13 + difficulty / 80);
+    const leadChance = isLastChance ? 0.92 : Math.min(0.58, 0.10 + urgency * 0.14 + difficulty / 85);
     return Math.random() < leadChance ? smallJoker : null;
   }
 
@@ -1296,11 +1494,11 @@ function aiConsiderSmallJokerBeforeLast3(game, seat, legal, sortedLow, myTeam, d
     // 對方暫時吃墩、或桌上已有頭時，小鬼提早出手的價值較高。
     if (winnerTeam !== myTeam) return smallJoker;
     if (pointCount > 0 && (isLastChance || Math.random() < 0.25 + difficulty / 80)) return smallJoker;
-    if (isLastChance && Math.random() < 0.65) return smallJoker;
+    if (isLastChance && Math.random() < 0.68) return smallJoker;
   }
 
   // 最後機會且小鬼已無法贏時，如果能用低成本把小鬼脫手，避免留到末三輪變小。
-  if (isLastChance && !smallWins && hasSaferLowCard && Math.random() < 0.45 + difficulty / 70) {
+  if (isLastChance && !smallWins && hasCheapAlternative && Math.random() < 0.48 + difficulty / 70) {
     return smallJoker;
   }
 
