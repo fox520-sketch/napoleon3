@@ -1126,3 +1126,137 @@ body[data-theme="twilight"] {
   --wave-bg: linear-gradient(135deg, #5d6bd8, #b780ff);
   --table-bg: radial-gradient(circle at center, rgba(255,255,255,0.14), transparent 40%), linear-gradient(135deg, rgba(54, 69, 132, 0.95), rgba(126, 82, 178, 0.86));
 }
+
+
+/* Twilight theme contrast fixes */
+body[data-theme="twilight"] .subtitle,
+body[data-theme="twilight"] .hint,
+body[data-theme="twilight"] small,
+body[data-theme="twilight"] .log-summary,
+body[data-theme="twilight"] .invite-url,
+body[data-theme="twilight"] .role,
+body[data-theme="twilight"] .kitty-area {
+  color: #d3ddfb;
+}
+
+body[data-theme="twilight"] .ghost {
+  color: #eef3ff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(196, 205, 236, 0.22);
+}
+
+body[data-theme="twilight"] input,
+body[data-theme="twilight"] select,
+body[data-theme="twilight"] textarea,
+body[data-theme="twilight"] .theme-picker select {
+  color: #eef3ff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(196, 205, 236, 0.22);
+}
+body[data-theme="twilight"] input::placeholder,
+body[data-theme="twilight"] textarea::placeholder { color: #c3cde9; }
+
+body[data-theme="twilight"] .quick-start,
+body[data-theme="twilight"] .invite-card,
+body[data-theme="twilight"] .lobby-seat,
+body[data-theme="twilight"] .seat,
+body[data-theme="twilight"] .center,
+body[data-theme="twilight"] .log-entry,
+body[data-theme="twilight"] dialog,
+body[data-theme="twilight"] .result-card,
+body[data-theme="twilight"] .table-trump,
+body[data-theme="twilight"] .table-heads,
+body[data-theme="twilight"] .bid-mini.emphasized {
+  color: #eef3ff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(196, 205, 236, 0.18);
+  box-shadow: 0 18px 44px rgba(5, 8, 20, 0.22);
+}
+
+body[data-theme="twilight"] .table::before {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+body[data-theme="twilight"] .table-trump span,
+body[data-theme="twilight"] .table-trump small,
+body[data-theme="twilight"] .table-heads span,
+body[data-theme="twilight"] .table-heads small,
+body[data-theme="twilight"] .bid-mini span,
+body[data-theme="twilight"] .bid-mini small {
+  color: #cad5f5;
+}
+
+body[data-theme="twilight"] .table-trump b,
+body[data-theme="twilight"] .table-heads b,
+body[data-theme="twilight"] .bid-mini b,
+body[data-theme="twilight"] .player-name {
+  color: #f5f7ff;
+}
+
+body[data-theme="twilight"] .table-heads.secret-open b,
+body[data-theme="twilight"] .tag.gold,
+body[data-theme="twilight"] .seat.bidding-turn .player-name::after,
+body[data-theme="twilight"] .bid-mini.emphasized b {
+  color: #fff0c2;
+}
+
+body[data-theme="twilight"] .tag {
+  color: #edf3ff;
+  background: rgba(144, 161, 255, 0.14);
+  border-color: rgba(196, 205, 236, 0.2);
+}
+body[data-theme="twilight"] .tag.danger {
+  color: #ffd7de;
+  background: rgba(217, 76, 92, 0.18);
+  border-color: rgba(255, 170, 183, 0.2);
+}
+body[data-theme="twilight"] .tag.gold {
+  background: rgba(214, 158, 46, 0.16);
+  border-color: rgba(255, 228, 150, 0.2);
+}
+body[data-theme="twilight"] .tag.call-active {
+  background: linear-gradient(135deg, #7384ff, #6cc7f8);
+  color: #fff;
+}
+body[data-theme="twilight"] .tag.call-high {
+  color: #fff0c2;
+  background: rgba(214, 158, 46, 0.16);
+  border-color: rgba(255, 233, 160, 0.25);
+}
+
+body[data-theme="twilight"] .card-btn,
+body[data-theme="twilight"] .play-card {
+  color: #1d2842;
+  background: rgba(248, 250, 255, 0.96);
+  border-color: rgba(167, 183, 255, 0.22);
+  box-shadow: 0 10px 18px rgba(5, 8, 20, 0.24);
+}
+body[data-theme="twilight"] .card-btn.red,
+body[data-theme="twilight"] .play-card.red { color: #c03b56; }
+body[data-theme="twilight"] .card-btn.joker,
+body[data-theme="twilight"] .play-card.joker {
+  color: #fff;
+  background: linear-gradient(135deg, #29365b, #7484ff);
+}
+body[data-theme="twilight"] .lead-badge {
+  color: #182345;
+  background: linear-gradient(135deg, #fff7cf, #ffffff);
+}
+
+body[data-theme="twilight"] .score-row,
+body[data-theme="twilight"] .bid-mini {
+  border-bottom-color: rgba(196, 205, 236, 0.14);
+}
+
+body[data-theme="twilight"] .check,
+body[data-theme="twilight"] .field span,
+body[data-theme="twilight"] .theme-picker,
+body[data-theme="twilight"] .config-note,
+body[data-theme="twilight"] .eyebrow {
+  color: #dce5ff;
+}
+body[data-theme="twilight"] .config-note b { color: #f5f7ff; }
+body[data-theme="twilight"] .close {
+  color: #eef3ff;
+  background: rgba(255, 255, 255, 0.08);
+}
