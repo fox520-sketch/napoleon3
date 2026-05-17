@@ -58,6 +58,60 @@ button:disabled { opacity: 0.48; cursor: not-allowed; }
 .big { width: 100%; margin-top: 1rem; }
 .hidden { display: none !important; }
 
+.site-home-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.72rem;
+  margin: 0 0 0.9rem;
+  padding: 0.48rem 0.72rem 0.48rem 0.48rem;
+  width: fit-content;
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.46);
+  box-shadow: 0 12px 28px rgba(18, 87, 113, 0.10);
+  backdrop-filter: blur(12px);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.site-home-link:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow: 0 16px 34px rgba(18, 87, 113, 0.15);
+}
+.site-home-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 16px;
+  color: #fff;
+  background: var(--wave-bg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 8px 18px rgba(8, 126, 164, 0.16);
+  font-size: 1.05rem;
+  line-height: 1;
+}
+body.in-game .site-home-link {
+  margin-bottom: 0.55rem;
+}
+@media (max-width: 720px) {
+  .site-home-link {
+    margin-bottom: 0.55rem;
+    padding: 0.38rem 0.58rem 0.38rem 0.38rem;
+    gap: 0.5rem;
+    font-size: 0.92rem;
+  }
+  .site-home-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 14px;
+    font-size: 0.98rem;
+  }
+}
+
+
 #app { width: min(1380px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 36px; }
 .topbar {
   display: flex;
@@ -1391,4 +1445,15 @@ body[data-theme="twilight"] .primary {
 }
 body[data-theme="twilight"] .wave {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.32), 0 18px 42px rgba(110, 126, 255, 0.2);
+}
+
+
+body[data-theme="twilight"] .site-home-link {
+  color: #f5f7ff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(196, 205, 236, 0.18);
+  box-shadow: 0 16px 42px rgba(5, 8, 20, 0.24);
+}
+body[data-theme="twilight"] .site-home-link:hover {
+  background: rgba(255, 255, 255, 0.13);
 }
