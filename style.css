@@ -1457,3 +1457,26 @@ body[data-theme="twilight"] .site-home-link {
 body[data-theme="twilight"] .site-home-link:hover {
   background: rgba(255, 255, 255, 0.13);
 }
+
+
+.play-rule-hint {
+  padding: 0.64rem 0.75rem;
+  border-radius: 14px;
+  background: rgba(8, 126, 164, 0.08);
+  border: 1px solid var(--line);
+  font-weight: 760;
+}
+.card-btn.illegal:not(:disabled) {
+  cursor: help;
+  opacity: 0.56;
+  border-style: dashed;
+}
+.card-btn.illegal:not(:disabled):hover {
+  opacity: 0.82;
+  transform: translateY(-2px);
+}
+body[data-theme="twilight"] .play-rule-hint {
+  background: rgba(144, 161, 255, 0.1);
+  border-color: rgba(196, 205, 236, 0.18);
+  color: #dce5ff;
+}

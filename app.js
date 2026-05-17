@@ -1,20 +1,44 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
-import {
-  getDatabase,
-  ref,
-  set,
-  get,
-  update,
-  push,
-  remove,
-  onValue,
-  onChildAdded,
-  off,
-  runTransaction,
-  onDisconnect,
-  serverTimestamp
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
+let initializeApp;
+let getAuth;
+let signInAnonymously;
+let getDatabase;
+let ref;
+let set;
+let get;
+let update;
+let push;
+let remove;
+let onValue;
+let onChildAdded;
+let off;
+let runTransaction;
+let onDisconnect;
+let serverTimestamp;
+
+async function loadFirebaseSdk() {
+  if (initializeApp) return;
+  const [appMod, authMod, dbMod] = await Promise.all([
+    import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js"),
+    import("https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js"),
+    import("https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js")
+  ]);
+  initializeApp = appMod.initializeApp;
+  getAuth = authMod.getAuth;
+  signInAnonymously = authMod.signInAnonymously;
+  getDatabase = dbMod.getDatabase;
+  ref = dbMod.ref;
+  set = dbMod.set;
+  get = dbMod.get;
+  update = dbMod.update;
+  push = dbMod.push;
+  remove = dbMod.remove;
+  onValue = dbMod.onValue;
+  onChildAdded = dbMod.onChildAdded;
+  off = dbMod.off;
+  runTransaction = dbMod.runTransaction;
+  onDisconnect = dbMod.onDisconnect;
+  serverTimestamp = dbMod.serverTimestamp;
+}
 
 const $ = (id) => document.getElementById(id);
 const SUITS = {
@@ -181,6 +205,7 @@ function parseFirebaseConfig() {
 
 async function connectFirebase() {
   try {
+    await loadFirebaseSdk();
     const config = parseFirebaseConfig();
     const name = sanitizeName($("playerName").value);
     $("playerName").value = name;
@@ -630,6 +655,19 @@ async function hostNextRound() {
   });
 }
 
+async function hostReturnToLobby() {
+  if (!isHost()) return;
+  if (appState.offline) {
+    leaveRoom(false);
+    return;
+  }
+  await update(roomRef(), {
+    "meta/status": "lobby",
+    "meta/updatedAt": Date.now(),
+    game: null
+  });
+}
+
 function makeDeck() {
   const cards = [];
   for (const suit of ["S", "H", "D", "C"]) {
@@ -1009,6 +1047,29 @@ function legalCardsFor(game, seat) {
   if (!leadSuit) return hand;
   const suited = hand.filter((c) => !c.joker && c.suit === leadSuit);
   return suited.length ? suited : hand;
+}
+
+function illegalPlayReason(game, seat, card) {
+  if (!game || seat === null || seat === undefined) return "目前不在牌局中。";
+  if (game.phase !== PHASE.PLAY) return "目前不是出牌階段。";
+  if (game.pendingClear) return "本墩剛結束，請等牌桌清空後再出牌。";
+  if (game.currentPlayer !== seat) return "還沒輪到你出牌。";
+  const hand = game.players?.[seat]?.hand || [];
+  if (!card || !hand.some((c) => c.id === card.id)) return "這張牌不在你的手牌中。";
+  const legalIds = new Set(legalCardsFor(game, seat).map((c) => c.id));
+  if (legalIds.has(card.id)) return "這張牌可以出。";
+  if (game.requestedId && hand.some((c) => c.id === game.requestedId)) {
+    const requested = findCardById(game.requestedId);
+    return `目前有人召 ${cardLong(requested)}，你手上有這張牌，必須先打出。`;
+  }
+  const leadSuit = effectiveLeadSuit(game.trick);
+  if (leadSuit) {
+    const hasLeadSuit = hand.some((c) => !c.joker && c.suit === leadSuit);
+    if (hasLeadSuit && (card.joker || card.suit !== leadSuit)) {
+      return `本墩首引花色是${suitName(leadSuit)}，你手上有${suitName(leadSuit)}，必須先跟牌。`;
+    }
+  }
+  return "這張牌目前不能出，請選擇亮起的合法牌。";
 }
 
 function effectiveLeadSuit(trick) {
@@ -1938,7 +1999,8 @@ function renderHand(game) {
     const selectable = canSelectCardInHand(game, card, actionable, legalIds);
     const selected = appState.selectedExchange.has(card.id) ? "selected" : "";
     const illegal = actionable && game.phase === PHASE.PLAY && !legalIds.has(card.id) ? "illegal" : "";
-    return `<button class="card-btn ${cardClass(card)} ${selected} ${illegal}" data-card="${card.id}" ${selectable ? "" : "disabled"}>${cardLabel(card)}</button>`;
+    const reason = illegal ? illegalPlayReason(game, seat, card) : "";
+    return `<button class="card-btn ${cardClass(card)} ${selected} ${illegal}" data-card="${card.id}" title="${escapeHtml(reason)}" ${selectable ? "" : "disabled"}>${cardLabel(card)}</button>`;
   }).join("");
   document.querySelectorAll("#hand .card-btn").forEach((btn) => {
     btn.addEventListener("click", () => onHandCardClick(game, btn.dataset.card));
@@ -1949,7 +2011,7 @@ function renderHand(game) {
 function canSelectCardInHand(game, card, actionable, legalIds) {
   if (!actionable) return false;
   if (game.phase === PHASE.EXCHANGE) return true;
-  if (game.phase === PHASE.PLAY) return legalIds.has(card.id);
+  if (game.phase === PHASE.PLAY) return true;
   return false;
 }
 
@@ -1970,7 +2032,17 @@ function onHandCardClick(game, cardId) {
     return;
   }
   if (game.phase === PHASE.PLAY) {
-    const card = game.players[myGameSeat(game)].hand.find((c) => c.id === cardId);
+    const seat = myGameSeat(game);
+    const card = game.players[seat].hand.find((c) => c.id === cardId);
+    const legalIds = new Set(legalCardsFor(game, seat).map((c) => c.id));
+    if (!legalIds.has(cardId)) {
+      const reason = illegalPlayReason(game, seat, card);
+      toast(reason);
+      $("handHint").textContent = reason;
+      const ruleHint = $("playRuleHint");
+      if (ruleHint) ruleHint.textContent = reason;
+      return;
+    }
     const leadSuit = (game.trick.length === 0 && card?.joker) ? ($("leadSuitSelect")?.value || null) : null;
     submitAction("playCard", { cardId, leadSuit });
   }
@@ -1987,9 +2059,10 @@ function renderActions(game) {
   }
   if (game.phase === PHASE.ROUND_END) {
     el.innerHTML = isHost()
-      ? `<button id="btnNextRound" class="primary">開始下一局</button>`
-      : `<p class="hint">等待房主開始下一局。</p>`;
+      ? `<div class="inline"><button id="btnNextRound" class="primary">再玩一局</button><button id="btnReturnLobby" class="ghost">${appState.offline ? "回主畫面" : "返回大廳"}</button></div><p class="hint">再玩一局會保留目前分數並換下一位發牌；返回大廳可重新調整座位與規則。</p>`
+      : `<p class="hint">等待房主選擇再玩一局或返回大廳。</p>`;
     $("btnNextRound")?.addEventListener("click", hostNextRound);
+    $("btnReturnLobby")?.addEventListener("click", hostReturnToLobby);
     return;
   }
   if (!myTurn) {
@@ -2043,7 +2116,10 @@ function renderActions(game) {
     const leadSuitSelect = game.trick.length === 0
       ? `<label class="field"><span>若首攻鬼牌，可指定要跟的花色</span><select id="leadSuitSelect"><option value="">不指定</option><option value="S">黑桃</option><option value="H">紅心</option><option value="D">方塊</option><option value="C">梅花</option></select></label>`
       : "";
-    el.innerHTML = `${leadSuitSelect}<p class="hint">直接點擊手牌出牌。</p>`;
+    const reasonHint = game.trick.length
+      ? `本墩首引：${suitName(effectiveLeadSuit(game.trick) || "")}。不能出的牌可點一下查看原因。`
+      : "你是本墩首攻，可出任一張牌；若首攻鬼牌可先指定要跟的花色。";
+    el.innerHTML = `${leadSuitSelect}<p id="playRuleHint" class="hint play-rule-hint">${escapeHtml(reasonHint)}</p><p class="hint">直接點擊手牌出牌。</p>`;
   }
 }
 
@@ -2158,5 +2234,16 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./service-worker.js").catch((error) => {
+      console.warn("Service worker registration failed", error);
+    });
+  });
+}
+
+registerServiceWorker();
 
 init();

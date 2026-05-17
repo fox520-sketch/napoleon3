@@ -4,6 +4,9 @@
 
 ## 功能
 
+- 點選不能出的牌會提示原因，例如必須跟首引花色或被召鬼牌。
+- 本局結束後，房主可選擇「再玩一局」或「返回大廳」；單人離線會回主畫面。
+- 已加入 PWA manifest、手機圖示與 service worker，可安裝到手機主畫面；單人離線主程式可快取使用。
 - 單人離線模式：不用建立房間、不用登入，主畫面直接開始
 - Firebase Realtime Database 多人同步
 - Firebase Authentication 匿名登入
@@ -60,11 +63,12 @@ http://localhost:8080
 ## 檔案說明
 
 - `index.html`：主頁與遊戲 UI
-- `style.css`：簡約清爽海洋風樣式
+- `style.css`：多主題樣式、手機版版面與牌桌視覺
 - `app.js`：離線模式、Firebase 多人同步、房間、牌局、AI、計分邏輯
 - `database.rules.json`：Realtime Database 基礎規則
 - `.github/workflows/pages.yml`：GitHub Pages 自動部署 workflow
 - `.nojekyll`：避免 GitHub Pages 使用 Jekyll 處理靜態檔案
+- `manifest.webmanifest`、`service-worker.js`、`icons/`：PWA 安裝與快取用檔案
 
 ## 遊戲流程
 
