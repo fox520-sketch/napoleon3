@@ -1440,6 +1440,7 @@ function renderGame() {
   normalizeGame(game);
   renderPhase(game);
   renderContract(game);
+  renderTableTrump(game);
   renderScores(game);
   renderSeats(game);
   renderTrick(game);
@@ -1474,6 +1475,26 @@ function renderPhase(game) {
     [PHASE.ROUND_END]: "本局已結束，房主可開始下一局。"
   };
   $("phaseHelp").textContent = helps[game.phase] || "";
+}
+
+function renderTableTrump(game) {
+  const el = $("tableTrump");
+  if (!el) return;
+  const hasTrump = game.napoleon !== null && game.napoleon !== undefined && game.trump;
+  if (!hasTrump) {
+    el.classList.add("hidden");
+    el.innerHTML = "";
+    return;
+  }
+  const suit = game.trump;
+  const suitMeta = SUITS[suit] || {};
+  const bidText = formatBid(game.bid || game.bidding?.highest);
+  el.className = `table-trump ${suitMeta.color === "red" ? "red" : "black"} ${suit === "NT" ? "no-trump" : ""}`;
+  el.innerHTML = `
+    <span>王牌</span>
+    <b>${escapeHtml(suitName(suit))}</b>
+    <small>叫品 ${escapeHtml(bidText)}</small>
+  `;
 }
 
 function renderContract(game) {
