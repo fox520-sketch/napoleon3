@@ -1531,6 +1531,14 @@ function renderContract(game) {
 }
 
 function renderScores(game) {
+  const scoreBoard = document.querySelector(".scoreboard");
+  const hideDuringGame = game.phase !== PHASE.ROUND_END;
+  if (scoreBoard) scoreBoard.classList.toggle("hidden", hideDuringGame);
+  if (hideDuringGame) {
+    $("scoreList").innerHTML = "";
+    return;
+  }
+
   $("scoreList").innerHTML = game.players.map((p) => {
     let role = "玩家";
     if (p.seat === game.napoleon) role = "拿破崙";
