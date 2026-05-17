@@ -51,7 +51,8 @@ const STORAGE = {
   logVisible: "napoleon.log.visible.v1",
   theme: "napoleon.theme.v1"
 };
-const THEME_OPTIONS = ["ocean", "eye-care", "e-ink", "forest", "grassland", "sakura", "twilight"];
+const THEME_OPTIONS = ["auto", "ocean", "eye-care", "e-ink", "forest", "grassland", "sakura", "twilight"];
+const THEME_PALETTE = THEME_OPTIONS.filter((theme) => theme !== "auto");
 
 const appState = {
   firebaseApp: null,
@@ -78,6 +79,7 @@ const appState = {
 
 function init() {
   applyTheme(loadTheme());
+  watchSystemTheme();
   const savedName = localStorage.getItem(STORAGE.name);
   $("playerName").value = savedName || randomGuestName();
   const params = new URLSearchParams(location.search);
@@ -121,12 +123,31 @@ function loadTheme() {
   return THEME_OPTIONS.includes(stored) ? stored : "ocean";
 }
 
+function resolveTheme(theme) {
+  const safeTheme = THEME_OPTIONS.includes(theme) ? theme : "ocean";
+  if (safeTheme !== "auto") return safeTheme;
+  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  return prefersDark ? "twilight" : "ocean";
+}
+
 function applyTheme(theme, persist = false) {
   const safeTheme = THEME_OPTIONS.includes(theme) ? theme : "ocean";
-  document.body.dataset.theme = safeTheme;
+  const actualTheme = resolveTheme(safeTheme);
+  document.body.dataset.themeChoice = safeTheme;
+  document.body.dataset.theme = actualTheme;
   const select = $("themeSelect");
   if (select) select.value = safeTheme;
   if (persist) localStorage.setItem(STORAGE.theme, safeTheme);
+}
+
+function watchSystemTheme() {
+  if (!window.matchMedia) return;
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+  const refresh = () => {
+    if (loadTheme() === "auto") applyTheme("auto", false);
+  };
+  if (media.addEventListener) media.addEventListener("change", refresh);
+  else if (media.addListener) media.addListener(refresh);
 }
 
 function randomGuestName() {
