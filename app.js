@@ -48,8 +48,10 @@ const FIREBASE_CONFIG = {
 
 const STORAGE = {
   name: "napoleon.player.name.v1",
-  logVisible: "napoleon.log.visible.v1"
+  logVisible: "napoleon.log.visible.v1",
+  theme: "napoleon.theme.v1"
 };
+const THEME_OPTIONS = ["ocean", "eye-care", "e-ink", "forest", "grassland", "sakura", "twilight"];
 
 const appState = {
   firebaseApp: null,
@@ -75,6 +77,7 @@ const appState = {
 };
 
 function init() {
+  applyTheme(loadTheme());
   const savedName = localStorage.getItem(STORAGE.name);
   $("playerName").value = savedName || randomGuestName();
   const params = new URLSearchParams(location.search);
@@ -98,6 +101,7 @@ function init() {
   $("btnStartGame").addEventListener("click", hostStartGame);
   $("btnRules").addEventListener("click", () => $("rulesDialog").showModal());
   $("closeRules").addEventListener("click", () => $("rulesDialog").close());
+  $("themeSelect").addEventListener("change", (event) => applyTheme(event.target.value, true));
   $("resultClose").addEventListener("click", hideRoundResultOverlay);
   $("difficulty").addEventListener("input", () => {
     $("difficultyLabel").textContent = $("difficulty").value;
@@ -110,6 +114,19 @@ function init() {
   if (appState.autoJoinCode) {
     window.setTimeout(() => connectFirebase(), 250);
   }
+}
+
+function loadTheme() {
+  const stored = localStorage.getItem(STORAGE.theme);
+  return THEME_OPTIONS.includes(stored) ? stored : "ocean";
+}
+
+function applyTheme(theme, persist = false) {
+  const safeTheme = THEME_OPTIONS.includes(theme) ? theme : "ocean";
+  document.body.dataset.theme = safeTheme;
+  const select = $("themeSelect");
+  if (select) select.value = safeTheme;
+  if (persist) localStorage.setItem(STORAGE.theme, safeTheme);
 }
 
 function randomGuestName() {
