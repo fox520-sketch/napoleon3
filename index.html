@@ -193,8 +193,12 @@
         </div>
       </section>
 
-      <aside class="right-panel panel">
-        <h3>牌局紀錄</h3>
+      <aside class="right-panel panel log-panel">
+        <div class="log-header">
+          <h3>牌局紀錄</h3>
+          <button id="btnToggleLog" class="ghost log-toggle" type="button">顯示紀錄</button>
+        </div>
+        <p id="logSummary" class="log-summary">牌局紀錄已隱藏。</p>
         <div id="log" class="log"></div>
       </aside>
     </main>

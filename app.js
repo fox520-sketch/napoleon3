@@ -47,7 +47,8 @@ const FIREBASE_CONFIG = {
 };
 
 const STORAGE = {
-  name: "napoleon.player.name.v1"
+  name: "napoleon.player.name.v1",
+  logVisible: "napoleon.log.visible.v1"
 };
 
 const appState = {
@@ -90,6 +91,8 @@ function init() {
   $("btnLeave").addEventListener("click", leaveRoom);
   $("btnGameExit").addEventListener("click", leaveRoom);
   $("btnCopyLink").addEventListener("click", copyInviteLink);
+  $("btnToggleLog").addEventListener("click", toggleLogVisibility);
+  applyLogVisibility(getLogVisible());
   $("btnAddBot").addEventListener("click", () => hostAddBot());
   $("btnRemoveBot").addEventListener("click", () => hostRemoveBot());
   $("btnStartGame").addEventListener("click", hostStartGame);
@@ -1783,8 +1786,36 @@ function isMyTurn(game) {
   return seat !== null && game.currentPlayer === seat;
 }
 
+function getLogVisible() {
+  return localStorage.getItem(STORAGE.logVisible) === "1";
+}
+
+function applyLogVisibility(visible) {
+  const gameView = $("gameView");
+  if (!gameView) return;
+  gameView.classList.toggle("log-collapsed", !visible);
+  const btn = $("btnToggleLog");
+  if (btn) {
+    btn.textContent = visible ? "隱藏紀錄" : "顯示紀錄";
+    btn.setAttribute("aria-expanded", visible ? "true" : "false");
+  }
+}
+
+function toggleLogVisibility() {
+  const next = !getLogVisible();
+  localStorage.setItem(STORAGE.logVisible, next ? "1" : "0");
+  applyLogVisibility(next);
+  renderLog(appState.room?.game || { log: [] });
+}
+
 function renderLog(game) {
-  $("log").innerHTML = (game.log || []).map((msg) => `<div class="log-entry">${escapeHtml(msg)}</div>`).join("");
+  const entries = game.log || [];
+  $("log").innerHTML = entries.map((msg) => `<div class="log-entry">${escapeHtml(msg)}</div>`).join("");
+  applyLogVisibility(getLogVisible());
+  const summary = $("logSummary");
+  if (summary) {
+    summary.textContent = entries.length ? `已隱藏 ${entries.length} 筆紀錄，需要時可展開查看。` : "牌局紀錄已隱藏。";
+  }
 }
 
 function cardLabel(card) {
