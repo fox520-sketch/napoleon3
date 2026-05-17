@@ -917,6 +917,46 @@ body.offline-game #btnLeave { display: none !important; }
   border-color: rgba(214, 158, 46, 0.38);
 }
 
+.table-heads {
+  position: absolute;
+  left: 50%;
+  top: 168px;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: grid;
+  gap: 0.08rem;
+  min-width: 170px;
+  padding: 0.5rem 0.85rem;
+  border-radius: 18px;
+  color: #123044;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  box-shadow: 0 14px 30px rgba(7, 32, 45, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  text-align: center;
+  pointer-events: none;
+}
+.table-heads span {
+  color: #527083;
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+.table-heads b {
+  color: #075b76;
+  font-size: 1.28rem;
+  line-height: 1.1;
+  font-weight: 950;
+}
+.table-heads small {
+  color: #6f8394;
+  font-size: 0.64rem;
+  font-weight: 780;
+}
+.table-heads.secret-open {
+  background: linear-gradient(135deg, rgba(255, 247, 215, 0.96), rgba(255, 255, 255, 0.88));
+  border-color: rgba(214, 158, 46, 0.38);
+}
+.table-heads.secret-open b { color: #8a5b0a; }
+
 @media (max-width: 720px) {
   .table-trump {
     top: 8px;
@@ -927,12 +967,26 @@ body.offline-game #btnLeave { display: none !important; }
   .table-trump span { font-size: 0.66rem; }
   .table-trump b { font-size: 1.02rem; }
   .table-trump small { font-size: 0.58rem; }
+  .table-heads {
+    top: 58px;
+    min-width: 134px;
+    padding: 0.34rem 0.56rem;
+    border-radius: 15px;
+  }
+  .table-heads span { font-size: 0.62rem; }
+  .table-heads b { font-size: 1rem; }
+  .table-heads small { display: none; }
 }
 
 @media (max-width: 420px) {
   .table-trump {
     top: 6px;
     min-width: 106px;
+    padding: 0.3rem 0.5rem;
+  }
+  .table-heads {
+    top: 52px;
+    min-width: 124px;
     padding: 0.3rem 0.5rem;
   }
 }

@@ -1642,6 +1642,7 @@ function renderGame() {
   renderPhase(game);
   renderContract(game);
   renderTableTrump(game);
+  renderTableTeamHeads(game);
   renderScores(game);
   renderSeats(game);
   renderTrick(game);
@@ -1695,6 +1696,35 @@ function renderTableTrump(game) {
     <span>王牌</span>
     <b>${escapeHtml(suitName(suit))}</b>
     <small>叫品 ${escapeHtml(bidText)}</small>
+  `;
+}
+
+function renderTableTeamHeads(game) {
+  const el = $("tableTeamHeads");
+  if (!el) return;
+  const hasNapoleon = game.napoleon !== null && game.napoleon !== undefined;
+  if (!hasNapoleon || game.phase === PHASE.BIDDING) {
+    el.classList.add("hidden");
+    el.innerHTML = "";
+    return;
+  }
+
+  const napoleonHeads = countPoints(game.captured?.[game.napoleon] || []);
+  const secretaryKnown = Boolean(game.secretaryRevealed && game.secretaryOwner !== null && game.secretaryOwner !== undefined);
+  const shownSeats = new Set([game.napoleon]);
+  if (secretaryKnown) shownSeats.add(game.secretaryOwner);
+  const shownHeads = Array.from(shownSeats).reduce((sum, seat) => sum + countPoints(game.captured?.[seat] || []), 0);
+  const target = game.contract ? ` / ${game.contract}` : "";
+  const label = secretaryKnown
+    ? (game.secretaryOwner === game.napoleon ? "拿破崙獨裁" : "拿破崙＋秘書")
+    : "拿破崙已吃";
+  const hint = secretaryKnown ? "秘書已公開，顯示合計頭數" : "秘書未公開，只顯示拿破崙個人頭數";
+
+  el.className = `table-heads ${secretaryKnown ? "secret-open" : "secret-hidden"}`;
+  el.innerHTML = `
+    <span>${escapeHtml(label)}</span>
+    <b>${shownHeads}${target} 頭</b>
+    <small>${escapeHtml(hint)}</small>
   `;
 }
 
