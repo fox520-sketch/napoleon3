@@ -718,6 +718,7 @@ function createGame(lobbyPlayers, settings, dealer = 0, scores = [0, 0, 0, 0, 0]
     captured: [[], [], [], [], []],
     requestedId: null,
     pendingClear: null,
+    trickHistory: [],
     bidding: { highest: null, turn: dealer, consecutivePasses: 0, passesWithoutBid: 0 },
     log: [`第 ${dealer + 1} 家先叫牌。最低 9 頭，叫品為「數字＋花色」，同數字依橋牌花色大小 ♣ < ♦ < ♥ < ♠ 比較。`],
     createdAt: Date.now()
@@ -797,6 +798,7 @@ function normalizeGame(game) {
   if (!Array.isArray(game.kitty)) game.kitty = [];
   if (!Array.isArray(game.log)) game.log = [];
   if (!Array.isArray(game.players)) game.players = [];
+  if (!Array.isArray(game.trickHistory)) game.trickHistory = [];
   if (game.pendingClear && (!game.pendingClear.until || !Array.isArray(game.trick))) game.pendingClear = null;
   game.players.forEach((p) => { if (p && !Array.isArray(p.hand)) p.hand = []; });
   ensureCaptured(game);
@@ -1088,6 +1090,16 @@ function settleTrick(game) {
   }
   const winner = best.seat;
   const heads = countPoints(game.trick.map((p) => p.card));
+  game.trickHistory = [
+    ...(Array.isArray(game.trickHistory) ? game.trickHistory : []),
+    {
+      trickNo: game.trickNo,
+      leadSuit,
+      winner,
+      heads,
+      plays: game.trick.map((p) => ({ seat: p.seat, card: p.card, leadSuit: p.leadSuit || null }))
+    }
+  ].slice(-12);
   game.captured[winner] = [...(game.captured[winner] || []), ...game.trick.map((p) => p.card)];
   game.pendingClear = {
     until: Date.now() + 3000,
@@ -1480,14 +1492,18 @@ function aiBuildPlayContext(game, seat) {
   const handHeads = countPoints(player.hand || []);
   const trumpCount = game.trump && game.trump !== "NT" ? (player.hand || []).filter((c) => c.suit === game.trump).length : 0;
   const napUrgency = aiClamp(napNeeds / Math.max(1, remainingHeads + pointsOnTable), 0, 1.6);
-  const defenderUrgency = aiClamp((5 - napNeeds) / 5, 0, 1.4);
+  const defenderUrgency = aiClamp((4 - napNeeds) / 4, 0, 1.5);
   const remainingBySuit = aiRemainingBySuit(game, seat);
+  const memory = aiBuildCardMemory(game, seat);
+  const contractMode = aiContractMode(game, seat, totals, pointsOnTable, remainingHeads, napNeeds, myTeam);
   return {
     totals,
     pointsOnTable,
     remainingHeads,
     capturedHeads,
     napNeeds,
+    napUrgency,
+    defenderUrgency,
     myTeam,
     currentWinner,
     currentWinnerTeam,
@@ -1502,6 +1518,8 @@ function aiBuildPlayContext(game, seat) {
     difficulty: Number(game.settings?.difficulty || 10),
     leadSuit: effectiveLeadSuit(game.trick),
     remainingBySuit,
+    memory,
+    contractMode,
     handSize: player.hand?.length || 0
   };
 }
@@ -1538,14 +1556,139 @@ function aiRemainingBySuit(game, seat) {
   return remaining;
 }
 
+function aiBuildCardMemory(game, observerSeat) {
+  const voids = Array.from({ length: 5 }, () => ({ S: false, H: false, D: false, C: false }));
+  const knownIds = new Set();
+  const playedIds = new Set();
+  const addKnown = (card, played = false) => {
+    if (!card?.id) return;
+    knownIds.add(card.id);
+    if (played) playedIds.add(card.id);
+  };
+
+  (game.players?.[observerSeat]?.hand || []).forEach((c) => addKnown(c, false));
+  (game.trick || []).forEach((p) => addKnown(p.card, true));
+  (game.captured || []).flat().forEach((c) => addKnown(c, true));
+  if (observerSeat === game.napoleon) (game.buried || []).forEach((c) => addKnown(c, false));
+
+  const histories = Array.isArray(game.trickHistory) ? game.trickHistory : [];
+  const currentAsHistory = (game.trick || []).length
+    ? [{ leadSuit: effectiveLeadSuit(game.trick), plays: game.trick }]
+    : [];
+  for (const trick of [...histories, ...currentAsHistory]) {
+    const plays = trick.plays || [];
+    const leadSuit = trick.leadSuit || aiLeadSuitFromPlays(plays);
+    if (!leadSuit) continue;
+    for (const play of plays.slice(1)) {
+      const card = play.card;
+      if (!card || card.joker) continue;
+      if (card.suit && card.suit !== leadSuit && voids[play.seat]) voids[play.seat][leadSuit] = true;
+    }
+  }
+
+  const remaining = makeDeck().filter((c) => !knownIds.has(c.id));
+  const remainingBySuit = { S: 0, H: 0, D: 0, C: 0, JOKER: 0 };
+  const remainingHeadsBySuit = { S: 0, H: 0, D: 0, C: 0 };
+  const playedBySuit = { S: 0, H: 0, D: 0, C: 0, JOKER: 0 };
+  const playedHeadsBySuit = { S: 0, H: 0, D: 0, C: 0 };
+  for (const card of remaining) {
+    if (card.joker) remainingBySuit.JOKER += 1;
+    else if (card.suit) {
+      remainingBySuit[card.suit] += 1;
+      if (isHeadCard(card)) remainingHeadsBySuit[card.suit] += 1;
+    }
+  }
+  for (const id of playedIds) {
+    const card = findCardById(id);
+    if (!card) continue;
+    if (card.joker) playedBySuit.JOKER += 1;
+    else if (card.suit) {
+      playedBySuit[card.suit] += 1;
+      if (isHeadCard(card)) playedHeadsBySuit[card.suit] += 1;
+    }
+  }
+
+  return {
+    voids,
+    remaining,
+    remainingBySuit,
+    remainingHeadsBySuit,
+    playedBySuit,
+    playedHeadsBySuit,
+    bigJokerSeen: playedIds.has("BJ"),
+    smallJokerSeen: playedIds.has("RJ"),
+    secretarySeen: game.secretaryCardId ? playedIds.has(game.secretaryCardId) : false
+  };
+}
+
+function aiLeadSuitFromPlays(plays) {
+  if (!plays?.length) return null;
+  const first = plays[0];
+  if (first.leadSuit) return first.leadSuit;
+  if (first.card?.joker) return null;
+  return first.card?.suit || null;
+}
+
+function aiContractMode(game, seat, totals, pointsOnTable, remainingHeads, napNeeds, myTeam) {
+  const stillAvailable = Math.max(1, remainingHeads + pointsOnTable);
+  const ratio = aiClamp(napNeeds / stillAvailable, 0, 2);
+  if (myTeam === "nap") {
+    if (napNeeds <= 0 || ratio <= 0.24) return { team: "nap", mode: "protect", ratio, label: "保約" };
+    if (ratio >= 0.62 || napNeeds >= Math.max(4, stillAvailable - 1)) return { team: "nap", mode: "chase", ratio, label: "搶約" };
+    return { team: "nap", mode: "balanced", ratio, label: "穩打" };
+  }
+  if (napNeeds <= 2 || ratio <= 0.28) return { team: "def", mode: "block", ratio, label: "擋約" };
+  if (ratio >= 0.72) return { team: "def", mode: "conserve", ratio, label: "守成" };
+  return { team: "def", mode: "balanced", ratio, label: "防守" };
+}
+
+function aiLikelyVoid(ctx, seat, suit) {
+  if (!suit || seat === null || seat === undefined) return false;
+  return Boolean(ctx?.memory?.voids?.[seat]?.[suit]);
+}
+
+function aiCountLikelyVoids(ctx, seats, suit) {
+  if (!suit) return 0;
+  return (seats || []).filter((seat) => aiLikelyVoid(ctx, seat, suit)).length;
+}
+
+function aiSeatCanOvertake(game, observerSeat, targetSeat, strength, leadSuit, memory) {
+  const unseen = memory?.remaining || aiUnseenCards(game, observerSeat);
+  const voids = memory?.voids || [];
+  const targetVoidLead = leadSuit ? Boolean(voids[targetSeat]?.[leadSuit]) : false;
+  return unseen.some((card) => {
+    if (cardStrength(card, game, leadSuit) <= strength) return false;
+    if (!leadSuit) return true;
+    if (card.id === game.secretaryCardId || card.joker) return true;
+    if (card.suit === leadSuit) return !targetVoidLead;
+    if (game.trump && game.trump !== "NT" && card.suit === game.trump && card.suit !== leadSuit) return targetVoidLead;
+    return false;
+  });
+}
+
+function aiFutureOvertakeRisk(game, seat, card, ctx) {
+  if (ctx.actingLast) return 0;
+  const leadSuit = ctx.leadSuit || (game.trick?.[0]?.leadSuit ?? game.trick?.[0]?.card?.suit ?? card.suit ?? null);
+  const strength = cardStrength(card, game, leadSuit);
+  let danger = 0;
+  for (const futureSeat of ctx.seatsAfter) {
+    if (aiTeamView(game, futureSeat, seat) === ctx.myTeam) continue;
+    if (aiSeatCanOvertake(game, seat, futureSeat, strength, leadSuit, ctx.memory)) {
+      danger += aiLikelyVoid(ctx, futureSeat, leadSuit) ? 1.35 : 1;
+    }
+  }
+  return aiClamp(danger / Math.max(1, ctx.seatsAfter.length), 0, 0.96);
+}
+
 function aiPotentialOvertakeRisk(game, seat, card, ctx) {
   if (ctx.actingLast) return 0;
   const leadSuit = ctx.leadSuit || (game.trick?.[0]?.leadSuit ?? game.trick?.[0]?.card?.suit ?? card.suit ?? null);
   const strength = cardStrength(card, game, leadSuit);
-  const unseen = aiUnseenCards(game, seat);
+  const unseen = ctx.memory?.remaining || aiUnseenCards(game, seat);
   const stronger = unseen.filter((c) => cardStrength(c, game, leadSuit) > strength).length;
-  const raw = stronger / Math.max(1, unseen.length);
-  return aiClamp(raw * ctx.seatsAfter.length * 2.2, 0, 0.92);
+  const rawDeckRisk = stronger / Math.max(1, unseen.length);
+  const seatRisk = aiFutureOvertakeRisk(game, seat, card, ctx);
+  return aiClamp(rawDeckRisk * ctx.seatsAfter.length * 0.9 + seatRisk * 0.78, 0, 0.96);
 }
 
 function aiCardSuitCount(game, seat, card) {
@@ -1553,9 +1696,11 @@ function aiCardSuitCount(game, seat, card) {
   return (game.players?.[seat]?.hand || []).filter((c) => c.suit === card.suit).length;
 }
 
-function aiIsLikelyMaster(game, seat, card, leadSuit = null) {
-  const strength = cardStrength(card, game, leadSuit || card.suit || null);
-  return aiUnseenCards(game, seat).every((c) => cardStrength(c, game, leadSuit || card.suit || null) <= strength);
+function aiIsLikelyMaster(game, seat, card, leadSuit = null, memory = null) {
+  const suit = leadSuit || card.suit || null;
+  const strength = cardStrength(card, game, suit);
+  const unseen = memory?.remaining || aiUnseenCards(game, seat);
+  return unseen.every((c) => cardStrength(c, game, suit) <= strength);
 }
 
 function aiScoreLeadCard(game, seat, card, ctx) {
@@ -1565,7 +1710,13 @@ function aiScoreLeadCard(game, seat, card, ctx) {
   const isJoker = Boolean(card.joker);
   const likelyWin = aiLikelyLeadWin(game, seat, card);
   const suitCount = aiCardSuitCount(game, seat, card);
-  const master = aiIsLikelyMaster(game, seat, card, card.suit || null);
+  const master = aiIsLikelyMaster(game, seat, card, card.suit || null, ctx.memory);
+  const leadSuitForCard = card.joker ? null : card.suit;
+  const futureOpponents = ctx.seatsAfter.filter((s) => aiTeamView(game, s, seat) !== ctx.myTeam);
+  const futureAllies = ctx.seatsAfter.filter((s) => aiTeamView(game, s, seat) === ctx.myTeam);
+  const opponentVoids = aiCountLikelyVoids(ctx, futureOpponents, leadSuitForCard);
+  const allyVoids = aiCountLikelyVoids(ctx, futureAllies, leadSuitForCard);
+  const vulnerableLead = Boolean(leadSuitForCard && !isTrump && opponentVoids > 0);
   let score = 0;
 
   // 領牌原則：早期先探牌與建立長門；中後期才積極收頭。
@@ -1579,6 +1730,30 @@ function aiScoreLeadCard(game, seat, card, ctx) {
   if (isTrump && game.trickNo <= 3 && ctx.trumpCount <= 2) score -= 7; // 王牌少時不要早早耗掉。
   if (isJoker && game.trickNo <= 4 && ctx.pointsOnTable === 0) score -= 10;
   if (ctx.late) score += base * 0.24 + (isPoint ? 5 : 0) + (master ? 4 : 0);
+
+  // 記牌與缺門推測：若後手對手已露出該花色缺門，領頭牌容易被切；若盟友缺門，領低牌可能創造切牌機會。
+  if (vulnerableLead && isPoint) score -= 8 + opponentVoids * 5;
+  if (vulnerableLead && !isPoint && ctx.contractMode.mode === "block") score += 2 + opponentVoids;
+  if (allyVoids > 0 && !isTrump && !isJoker && !isPoint) score += allyVoids * (ctx.contractMode.mode === "chase" ? 4.2 : 2.4);
+  if (allyVoids > 0 && isPoint && !master) score -= allyVoids * 3.2;
+
+  if (ctx.contractMode.mode === "protect") {
+    if (likelyWin >= 0.78) score += 6 + (master ? 3 : 0);
+    if (isPoint && likelyWin < 0.86) score -= 8;
+    if (vulnerableLead) score -= 4;
+    if (isTrump && ctx.trumpCount <= 2 && !master) score -= 4;
+  } else if (ctx.contractMode.mode === "chase") {
+    if (likelyWin >= 0.68) score += 7 + (isPoint ? 7 : 0) + (isTrump || isJoker ? 4 : 0);
+    if (master) score += 6;
+    if (!isPoint && likelyWin < 0.4 && ctx.handHeads >= 2) score -= 4;
+  } else if (ctx.contractMode.mode === "block") {
+    if (likelyWin >= 0.72) score += 8 + (isTrump || isJoker ? 4 : 0);
+    if (master) score += 5;
+    if (isPoint && likelyWin < 0.82) score -= 10;
+  } else if (ctx.contractMode.mode === "conserve") {
+    if ((isTrump || isJoker) && !master && !ctx.late) score -= 8;
+    if (isPoint && likelyWin < 0.8) score -= 7;
+  }
 
   if (ctx.myTeam === "nap") {
     const pressure = 8 + ctx.handHeads * 1.7 + ctx.napUrgency * 20;
@@ -1617,6 +1792,11 @@ function aiScoreFollowCard(game, seat, card, ctx) {
   const pointsWithCard = ctx.pointsOnTable + (isPoint ? 1 : 0);
   const headWeight = 7 + ctx.difficulty * 0.56 + (ctx.myTeam === "nap" ? ctx.napUrgency * 11 : ctx.defenderUrgency * 11);
   const overtakeRisk = candidateWins ? aiPotentialOvertakeRisk(game, seat, card, ctx) : 0;
+  const futureOpponents = ctx.seatsAfter.filter((s) => aiTeamView(game, s, seat) !== ctx.myTeam);
+  const futureAllies = ctx.seatsAfter.filter((s) => aiTeamView(game, s, seat) === ctx.myTeam);
+  const opponentVoidLead = aiCountLikelyVoids(ctx, futureOpponents, ctx.leadSuit);
+  const allyVoidLead = aiCountLikelyVoids(ctx, futureAllies, ctx.leadSuit);
+  const voidCutDanger = opponentVoidLead > 0 && !ctx.actingLast;
   let score = 0;
 
   if (allyWinning) {
@@ -1627,11 +1807,14 @@ function aiScoreFollowCard(game, seat, card, ctx) {
       if (!ctx.actingLast && overtakeRisk > 0.55 && pointsWithCard >= 2) score += 4; // 防止後面被對方超車。
     } else {
       score += 9;
-      const feedSafe = ctx.actingLast || ctx.opponentsAfter === 0;
-      const feedBonus = feedSafe ? 30 : Math.max(2, 13 - ctx.opponentsAfter * 5 - overtakeRisk * 8);
+      const feedSafe = ctx.actingLast || ctx.opponentsAfter === 0 || (!voidCutDanger && opponentVoidLead === 0);
+      const feedBonus = feedSafe ? 30 : Math.max(0, 10 - ctx.opponentsAfter * 5 - opponentVoidLead * 7);
       if (isPoint) score += feedBonus;
+      if (ctx.contractMode.mode === "protect" && isPoint && feedSafe) score += 9;
+      if (ctx.contractMode.mode === "chase" && isPoint && feedSafe) score += 7;
       if (isTrump || isJoker) score -= 6;
       score -= base * 0.13;
+      if (!feedSafe && isPoint) score -= 10 + opponentVoidLead * 5;
       if (!feedSafe && isPoint && pointsWithCard >= 3) score -= 7;
     }
   } else {
@@ -1655,6 +1838,28 @@ function aiScoreFollowCard(game, seat, card, ctx) {
       if (ctx.alliesAfter > 0 && isPoint && ctx.pointsOnTable === 0) score -= 5;
     }
   }
+
+  // 保約 / 擋約模式：局勢越接近成敗線，越明確搶頭或防守。
+  if (ctx.contractMode.mode === "protect") {
+    if (allyWinning && !candidateWins && isPoint && !voidCutDanger) score += 10;
+    if (!allyWinning && candidateWins && pointsWithCard > 0 && overtakeRisk < 0.55) score += 10;
+    if ((isTrump || isJoker) && pointsWithCard === 0 && !ctx.late) score -= 5;
+  } else if (ctx.contractMode.mode === "chase") {
+    if (!allyWinning && candidateWins) score += 10 + pointsWithCard * 5;
+    if (allyWinning && !candidateWins && isPoint && !voidCutDanger) score += 8;
+    if (!candidateWins && !allyWinning && isPoint) score -= 16;
+  } else if (ctx.contractMode.mode === "block") {
+    if (!allyWinning && candidateWins) score += 12 + pointsWithCard * 6;
+    if (!candidateWins && !allyWinning && isPoint) score -= 18;
+    if (candidateWins && overtakeRisk < 0.35) score += 5;
+  } else if (ctx.contractMode.mode === "conserve") {
+    if ((isTrump || isJoker) && !candidateWins && !ctx.late) score -= 8;
+    if (candidateWins && pointsWithCard === 0 && !ctx.actingLast) score -= 4;
+  }
+
+  // 若後手盟友已知缺首引花色，可以期待他切牌；若後手對手缺門，送頭要更保守。
+  if (allyVoidLead > 0 && !candidateWins && !isPoint && ctx.myTeam === "nap") score += 2.5 * allyVoidLead;
+  if (voidCutDanger && isPoint && !candidateWins) score -= 8 + opponentVoidLead * 5;
 
   // 若自己是末家，判斷更果斷：能吃有頭墩就吃；盟友已吃就放心餵頭。
   if (ctx.actingLast) {
