@@ -1699,6 +1699,7 @@ function aiRemainingBySuit(game, seat) {
 
 function aiBuildCardMemory(game, observerSeat) {
   const voids = Array.from({ length: 5 }, () => ({ S: false, H: false, D: false, C: false }));
+  const voidConfidence = Array.from({ length: 5 }, () => ({ S: 0, H: 0, D: 0, C: 0 }));
   const knownIds = new Set();
   const playedIds = new Set();
   const addKnown = (card, played = false) => {
@@ -1723,7 +1724,10 @@ function aiBuildCardMemory(game, observerSeat) {
     for (const play of plays.slice(1)) {
       const card = play.card;
       if (!card || card.joker) continue;
-      if (card.suit && card.suit !== leadSuit && voids[play.seat]) voids[play.seat][leadSuit] = true;
+      if (card.suit && card.suit !== leadSuit && voids[play.seat]) {
+        voids[play.seat][leadSuit] = true;
+        voidConfidence[play.seat][leadSuit] = aiClamp((voidConfidence[play.seat][leadSuit] || 0) + 0.5, 0, 1);
+      }
     }
   }
 
@@ -1751,6 +1755,7 @@ function aiBuildCardMemory(game, observerSeat) {
 
   return {
     voids,
+    voidConfidence,
     remaining,
     remainingBySuit,
     remainingHeadsBySuit,
@@ -2316,8 +2321,140 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
   score += aiTrumpControlAdjustment(game, seat, card, ctx, candidateWins, pointsWithCard) * skill;
   score += aiEndgamePlanAdjustment(game, seat, card, ctx, candidateWins, pointsWithCard) * skill;
   score += aiCooperationAdjustment(game, seat, card, ctx, candidateWins, pointsWithCard) * skill;
+  score += aiV7RiskTempoAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
+  score += aiV7SecretarySignalAdjustment(game, seat, card, ctx, candidateWins, pointsWithCard) * skill;
 
   return score;
+}
+
+
+function aiV7RiskTempoAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) {
+  const trickLen = game.trick?.length || 0;
+  const isPoint = isHeadCard(card);
+  const isTrump = Boolean(game.trump && game.trump !== "NT" && card.suit === game.trump);
+  const isJoker = Boolean(card.joker);
+  const cardSuit = card.joker ? null : card.suit;
+  const currentEnemyWinning = trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam;
+  const currentAllyWinning = trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam;
+  const futureOpponents = ctx.seatsAfter.filter((s) => aiTeamView(game, s, seat) !== ctx.myTeam);
+  const futureAllies = ctx.seatsAfter.filter((s) => aiTeamView(game, s, seat) === ctx.myTeam);
+  const futureRisk = candidateWins ? aiV7FutureDanger(game, seat, card, ctx, futureOpponents) : 0;
+  const master = cardSuit ? aiIsLikelyMaster(game, seat, card, cardSuit, ctx.memory) : Boolean(card.joker || card.id === game.secretaryCardId);
+  const likelyWin = trickLen === 0 ? aiLikelyLeadWin(game, seat, card) : (candidateWins ? aiClamp(1 - futureRisk, 0, 1) : 0);
+  let score = 0;
+
+  // 高難度加入「剩餘大牌推估」：非 master 的頭牌，若後手敵方仍可能有更大牌或切牌，就不要太早送。
+  if (isPoint && !master && !ctx.actingLast) {
+    const strongerLeft = aiV7StrongerUnseenCount(game, seat, card, ctx.leadSuit || cardSuit);
+    score -= aiClamp(strongerLeft * 2.8 + futureRisk * 12, 0, 18);
+    if (currentAllyWinning) score += 3; // 盟友吃墩時可稍微放寬。
+  }
+
+  // 安全兌現：已知 master 或近似 master 的頭牌，在保約/擋約臨界時要敢收。
+  if ((master || likelyWin >= 0.86) && isPoint) {
+    if (ctx.contractMode.mode === "protect" || ctx.contractMode.mode === "block") score += 8 + pointsWithCard * 2.5;
+    if (ctx.contractMode.mode === "chase") score += 10 + ctx.napUrgency * 5;
+    if (ctx.handSize <= 4) score += 7;
+  }
+
+  // tempo：還沒必要時保留唯一控制牌；但如果這墩有 2 頭以上或接近成敗線，就要拿出來。
+  const control = aiControlCardValue(game, seat, card, ctx);
+  const importantTrick = pointsWithCard >= 2 || ctx.napNeeds <= Math.max(2, pointsWithCard + 1) || ctx.handSize <= 3;
+  if (control >= 14 && !importantTrick && !ctx.late) score -= 9;
+  if (control >= 14 && importantTrick && (candidateWins || likelyWin >= 0.82)) score += 7;
+
+  // 敵我風險矩陣：後手對手已推測缺門或可能切王牌時，降低非安全頭牌；後手隊友缺門時，低牌引導切牌。
+  const relevantSuit = ctx.leadSuit || cardSuit;
+  if (relevantSuit && !isTrump && !isJoker) {
+    const enemyVoidPressure = aiV7VoidPressure(ctx, futureOpponents, relevantSuit);
+    const allyVoidPressure = aiV7VoidPressure(ctx, futureAllies, relevantSuit);
+    if (enemyVoidPressure > 0 && isPoint && !candidateWins) score -= 10 * enemyVoidPressure;
+    if (enemyVoidPressure > 0.45 && candidateWins && !ctx.actingLast) score -= 5 * enemyVoidPressure;
+    if (allyVoidPressure > 0 && !isPoint && !candidateWins && ctx.myTeam === "nap") score += 5 * allyVoidPressure;
+  }
+
+  // 出牌節奏：若目前隊友穩吃且後面沒有敵方，頭牌加分；如果隊友可能被超車，別急著餵太多頭。
+  if (currentAllyWinning && isPoint && !candidateWins) {
+    const allyPlay = game.trick?.find((p) => p.seat === ctx.currentWinner);
+    const allyRisk = allyPlay ? aiV7FutureDanger(game, seat, allyPlay.card, ctx, futureOpponents) : 0;
+    if (allyRisk < 0.28) score += 9 + pointsWithCard;
+    else score -= 7 * allyRisk;
+  }
+
+  // 防家在擋約時避免「幫拿破崙清路」；拿破崙軍搶約時則更願意用王牌/鬼牌控場。
+  if (ctx.myTeam === "def" && ctx.contractMode.mode !== "block" && trickLen === 0 && isTrump && game.napoleon !== seat) score -= 8;
+  if (ctx.myTeam === "nap" && (ctx.contractMode.mode === "chase" || ctx.napUrgency > 0.75) && (isTrump || isJoker) && candidateWins) score += 8;
+
+  return score;
+}
+
+function aiV7SecretarySignalAdjustment(game, seat, card, ctx, candidateWins, pointsWithCard) {
+  if (game.secretaryRevealed || !game.secretaryCardId) return 0;
+  const isSecretCard = card.id === game.secretaryCardId;
+  const isPoint = isHeadCard(card);
+  const guess = ctx.secretaryGuess;
+  let score = 0;
+
+  // 暗秘書本人：不是關鍵墩時少曝光；但保約/搶約或能收多頭時要敢亮。
+  if (isSecretCard) {
+    const keyMoment = pointsWithCard >= 2 || ctx.contractMode.mode === "chase" || ctx.contractMode.mode === "protect" || ctx.handSize <= 4;
+    if (candidateWins && keyMoment) score += 22;
+    else if (!keyMoment) score -= 18;
+  }
+
+  // 防家：若某人疑似秘書，避免讓他吃到頭；若他在後手，少送容易被餵的頭牌。
+  if (ctx.myTeam === "def" && guess && guess.confidence >= 0.58) {
+    const secretAfter = ctx.seatsAfter.includes(guess.seat);
+    const secretWinning = ctx.currentWinner === guess.seat;
+    if (secretWinning && !candidateWins && isPoint) score -= 14 * guess.confidence;
+    if (secretWinning && candidateWins) score += 11 * guess.confidence;
+    if (secretAfter && isPoint && !candidateWins) score -= 7 * guess.confidence;
+  }
+
+  // 拿破崙本人：秘書還沒公開時，避免過度逼秘書曝光；若已經需要頭數，才用能引出秘書的花色。
+  if (seat === game.napoleon && !isSecretCard && card.suit) {
+    const secret = findCardById(game.secretaryCardId);
+    if (secret?.suit === card.suit && ctx.contractMode.mode !== "chase" && (game.trickNo || 0) < 5) score -= 5;
+    if (secret?.suit === card.suit && ctx.contractMode.mode === "chase") score += 5;
+  }
+
+  return score;
+}
+
+function aiV7FutureDanger(game, observerSeat, card, ctx, futureOpponents) {
+  if (!futureOpponents?.length) return 0;
+  const leadSuit = ctx.leadSuit || (card.joker ? null : card.suit);
+  const strength = cardStrength(card, game, leadSuit);
+  const unseen = aiUnseenCards(game, observerSeat);
+  let danger = 0;
+  for (const opp of futureOpponents) {
+    const voidBonus = leadSuit && ctx.memory?.voids?.[opp]?.[leadSuit] ? 0.28 + (ctx.memory?.voidConfidence?.[opp]?.[leadSuit] || 0) * 0.35 : 0;
+    const canTrump = leadSuit && game.trump && game.trump !== "NT" && leadSuit !== game.trump && ctx.memory?.voids?.[opp]?.[leadSuit];
+    const stronger = unseen.some((c) => {
+      if (canTrump && (c.joker || c.suit === game.trump)) return true;
+      return cardStrength(c, game, leadSuit) > strength;
+    });
+    if (stronger) danger += 0.22;
+    danger += voidBonus;
+  }
+  if (card.joker && !(game.settings?.jokerLowLast3 && game.trickNo >= 7)) danger *= card.bigJoker ? 0.18 : 0.32;
+  if (card.id === game.secretaryCardId) danger *= 0.2;
+  return aiClamp(danger, 0, 1);
+}
+
+function aiV7VoidPressure(ctx, seats, suit) {
+  if (!suit || !seats?.length) return 0;
+  let pressure = 0;
+  for (const s of seats) {
+    if (ctx.memory?.voids?.[s]?.[suit]) pressure += 0.55 + (ctx.memory?.voidConfidence?.[s]?.[suit] || 0) * 0.45;
+  }
+  return aiClamp(pressure, 0, 1.6);
+}
+
+function aiV7StrongerUnseenCount(game, seat, card, leadSuit = null) {
+  const suit = leadSuit || (card.joker ? null : card.suit);
+  const strength = cardStrength(card, game, suit);
+  return aiUnseenCards(game, seat).filter((c) => cardStrength(c, game, suit) > strength).length;
 }
 
 function aiControlCardValue(game, seat, card, ctx) {
