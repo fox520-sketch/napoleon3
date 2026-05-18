@@ -1249,10 +1249,22 @@ function getBotAction(game) {
   return null;
 }
 
+function aiPersonality(seat) {
+  const types = [
+    { type: "balanced", bidBias: 0, risk: 0, feed: 0, block: 0 },
+    { type: "conservative", bidBias: -0.55, risk: -0.34, feed: 0.15, block: 0.12 },
+    { type: "aggressive", bidBias: 0.48, risk: 0.38, feed: -0.06, block: 0.25 },
+    { type: "support", bidBias: -0.18, risk: -0.08, feed: 0.38, block: 0.05 },
+    { type: "blocker", bidBias: 0.05, risk: 0.12, feed: -0.02, block: 0.42 }
+  ];
+  return types[Math.abs(Number(seat) || 0) % types.length];
+}
+
 function aiBidAction(game, seat) {
   const player = game.players[seat];
   const highest = game.bidding?.highest || null;
   const difficulty = Number(game.settings?.difficulty || 10);
+  const personality = aiPersonality(seat);
   const profile = aiEvaluateBidProfile(player.hand, game.settings, difficulty);
   const legalAll = legalBidsAbove(highest, game.settings);
   if (!legalAll.length) return { uid: player.uid, seat, type: "pass", payload: {} };
@@ -1261,10 +1273,16 @@ function aiBidAction(game, seat) {
   const minimumNeeded = legalAll[0];
   const marginal = profile.ceiling <= minimumNeeded.amount;
   const currentPressure = highest ? Math.max(0, bidValue(highest) - bidValue({ amount: 9, suit: "C" })) / 80 : 0;
-  const passDiscipline = aiClamp(0.10 + (21 - difficulty) * 0.018 + currentPressure * 0.12 + (marginal ? 0.22 : 0), 0.04, 0.62);
+  const expectedGap = profile.expectedHeads - (highest ? highest.amount : 9);
+  const passDiscipline = aiClamp(
+    0.10 + (21 - difficulty) * 0.018 + currentPressure * 0.12 + (marginal ? 0.22 : 0)
+      - personality.bidBias * 0.12 - aiClamp(expectedGap, -2, 3) * 0.035,
+    0.04,
+    0.68
+  );
 
   // 弱牌、牌型不集中、或只是勉強能蓋過目前叫品時，高難度電腦會更願意 Pass。
-  if (!safeLegal.length || profile.confidence < 0.24 || (marginal && Math.random() < passDiscipline)) {
+  if (!safeLegal.length || profile.confidence < 0.24 || profile.expectedHeads < minimumNeeded.amount - 0.75 || (marginal && Math.random() < passDiscipline)) {
     return { uid: player.uid, seat, type: "pass", payload: {} };
   }
 
@@ -1278,7 +1296,7 @@ function aiBidAction(game, seat) {
 
   // 真正牌力強時才跳叫；否則以最低安全叫品為主，避免電腦亂衝。
   const roomAbove = profile.ceiling - chosenAmount;
-  const jumpIntent = aiClamp((profile.confidence - 0.58) * 0.55 + (difficulty - 12) * 0.018 + roomAbove * 0.045, 0, 0.46);
+  const jumpIntent = aiClamp((profile.confidence - 0.58) * 0.55 + (difficulty - 12) * 0.018 + roomAbove * 0.045 + personality.bidBias * 0.08, 0, 0.50);
   if (roomAbove >= 2 && Math.random() < jumpIntent) chosenAmount = Math.min(profile.ceiling, chosenAmount + 1);
   if (roomAbove >= 4 && profile.confidence > 0.76 && difficulty >= 17 && Math.random() < 0.18) chosenAmount = Math.min(profile.ceiling, chosenAmount + 1);
   if (!byAmount.has(chosenAmount)) chosenAmount = legalAmounts.filter((n) => n <= chosenAmount).pop() || legalAmounts[0];
@@ -1317,20 +1335,66 @@ function aiEvaluateBidProfile(hand, settings, difficulty = 10) {
   if (suits.includes("NT")) {
     suitScores.NT = ntBonus * 12;
   }
-  const raw = 8.05 + headPower + controls + concentration + shape - balancedPenalty + difficulty / 115;
-  const randomRisk = (Math.random() - 0.5) * Math.max(0.05, (21 - difficulty) * 0.035);
+  const expectedBySuit = aiExpectedHeadProfile(hand, settings, suitDetails);
+  const bestExpected = Math.max(...Object.values(expectedBySuit).filter((v) => Number.isFinite(v)));
+  const rawShapePower = 8.05 + headPower + controls + concentration + shape - balancedPenalty + difficulty / 115;
+  // 期望頭數模型：高難度叫牌會更接近「實際可拿幾頭」，低難度仍帶一些冒險與誤判。
+  const expectedHeads = aiClamp(bestExpected + difficulty / 85, 7.2, 15.8);
+  const raw = rawShapePower * 0.45 + expectedHeads * 0.55;
+  const randomRisk = (Math.random() - 0.5) * Math.max(0.04, (21 - difficulty) * 0.038);
   const ceiling = Math.max(8, Math.min(16, Math.floor(raw + randomRisk)));
-  const confidence = aiClamp((raw - 8.4) / 5.2, 0, 1);
-  return { ceiling, confidence, suitScores, suitDetails, bestSuit: bestSuit[0], points, jokers, raw };
+  const confidence = aiClamp((raw - 8.35) / 5.35, 0, 1);
+  return { ceiling, confidence, suitScores, suitDetails, bestSuit: bestSuit[0], points, jokers, raw, expectedHeads, expectedBySuit };
+}
+
+function aiExpectedHeadProfile(hand, settings, suitDetails = aiSuitDetails(hand)) {
+  const suits = allowedBidSuits(settings);
+  const jokers = hand.filter((c) => c.joker).length;
+  const bigJoker = hand.some((c) => c.id === "BJ") ? 0.55 : 0;
+  const smallJoker = hand.some((c) => c.id === "RJ") ? 0.42 : 0;
+  const totalHeads = countPoints(hand);
+  const aces = hand.filter((c) => c.rank === "A").length;
+  const kings = hand.filter((c) => c.rank === "K").length;
+  const queens = hand.filter((c) => c.rank === "Q").length;
+  const jacks = hand.filter((c) => c.rank === "J").length;
+  const map = {};
+  for (const suit of ["S", "H", "D", "C"]) {
+    const d = suitDetails[suit];
+    const trumpHeads = d.pointCount;
+    const longTrump = Math.max(0, d.count - 3);
+    const topTrump = d.topCount;
+    const shortSide = Object.entries(suitDetails).filter(([s]) => s !== suit).reduce((n, [, x]) => n + (x.count <= 1 ? 1 : 0), 0);
+    const isolatedHeads = Object.entries(suitDetails).filter(([s]) => s !== suit).reduce((n, [, x]) => n + (x.count <= 1 ? x.pointCount : 0), 0);
+    map[suit] = 8.15
+      + totalHeads * 0.36
+      + trumpHeads * 0.62
+      + longTrump * 0.48
+      + topTrump * 0.30
+      + jokers * 0.78 + bigJoker + smallJoker
+      + aces * 0.18 + kings * 0.08 + queens * 0.03
+      + shortSide * 0.16
+      - isolatedHeads * 0.17
+      + SUITS[suit].order * 0.03;
+  }
+  if (suits.includes("NT")) {
+    const counts = Object.values(suitDetails).map((d) => d.count);
+    const balanced = counts.filter((n) => n >= 2).length;
+    const voids = counts.filter((n) => n === 0).length;
+    const singletons = counts.filter((n) => n === 1).length;
+    map.NT = 7.85 + totalHeads * 0.32 + jokers * 0.95 + aces * 0.26 + kings * 0.14 + queens * 0.05 + balanced * 0.18 - voids * 0.9 - singletons * 0.32;
+  }
+  return map;
 }
 
 function aiBidSuitScore(profile, bid) {
   const detail = profile.suitDetails[bid.suit];
-  if (bid.suit === "NT") return (profile.suitScores.NT || 0) + bid.amount * 0.04;
+  const expectedFit = (profile.expectedBySuit?.[bid.suit] || 0) - bid.amount;
+  if (bid.suit === "NT") return (profile.suitScores.NT || 0) + bid.amount * 0.04 + expectedFit * 1.15;
   return (profile.suitScores[bid.suit] || 0)
     + (detail?.count || 0) * 0.95
     + (detail?.pointCount || 0) * 1.4
     + (detail?.topCount || 0) * 0.72
+    + expectedFit * 1.25
     + SUITS[bid.suit].order * 0.05
     - Math.max(0, bid.amount - profile.ceiling) * 8;
 }
@@ -1419,9 +1483,25 @@ function aiChooseSecretary(game, seat) {
   const allowSolo = Boolean(game.settings?.allowSelfSecretary && aiShouldConsiderSolo(game, seat));
   const candidates = makeDeck().filter((c) => !buried.has(c.id) && (allowSolo || !own.has(c.id)));
   const preferred = candidates
-    .map((card) => ({ card, score: cardSecretaryValue(card, game, seat, own) }))
+    .map((card) => ({ card, score: cardSecretaryValue(card, game, seat, own) + aiSecretarySynergy(card, game, seat) }))
     .sort((a, b) => b.score - a.score);
   return (preferred[0]?.card || candidates[0]).id;
+}
+
+function aiSecretarySynergy(card, game, seat) {
+  if (!card) return 0;
+  const hand = game.players?.[seat]?.hand || [];
+  const profile = aiEvaluateBidProfile(hand, game.settings, game.settings?.difficulty || 10);
+  const sameSuit = card.suit ? hand.filter((c) => c.suit === card.suit).length : 0;
+  const isTrump = Boolean(game.trump && game.trump !== "NT" && card.suit === game.trump);
+  let score = 0;
+  // 高叫品需要更可靠的秘書牌；低叫品可偏向補弱門。
+  if (getBidAmount(game) >= 12 && (card.joker || isTrump || card.rank === "A")) score += 10;
+  if (sameSuit <= 1 && card.suit && isHeadCard(card)) score += 7;
+  if (sameSuit === 0 && card.suit && !isTrump) score += 3;
+  if (profile.expectedBySuit?.[card.suit] && profile.expectedBySuit[card.suit] < profile.expectedHeads - 1.2 && isHeadCard(card)) score += 4;
+  if (card.rank === "J" && !isTrump && getBidAmount(game) >= 12) score -= 2;
+  return score;
 }
 
 function aiShouldConsiderSolo(game, seat) {
@@ -1495,7 +1575,9 @@ function aiBuildPlayContext(game, seat) {
   const defenderUrgency = aiClamp((4 - napNeeds) / 4, 0, 1.5);
   const remainingBySuit = aiRemainingBySuit(game, seat);
   const memory = aiBuildCardMemory(game, seat);
+  const secretaryGuess = aiInferSecretaryOwner(game, seat, memory);
   const contractMode = aiContractMode(game, seat, totals, pointsOnTable, remainingHeads, napNeeds, myTeam);
+  const personality = aiPersonality(seat);
   return {
     totals,
     pointsOnTable,
@@ -1519,7 +1601,9 @@ function aiBuildPlayContext(game, seat) {
     leadSuit: effectiveLeadSuit(game.trick),
     remainingBySuit,
     memory,
+    secretaryGuess,
     contractMode,
+    personality,
     handSize: player.hand?.length || 0
   };
 }
@@ -1619,6 +1703,60 @@ function aiBuildCardMemory(game, observerSeat) {
     smallJokerSeen: playedIds.has("RJ"),
     secretarySeen: game.secretaryCardId ? playedIds.has(game.secretaryCardId) : false
   };
+}
+
+function aiInferSecretaryOwner(game, observerSeat, memory = null) {
+  if (!game || game.secretaryRevealed || !game.secretaryCardId || game.secretaryOwner === null || game.secretaryOwner === undefined) return null;
+  const secret = findCardById(game.secretaryCardId);
+  if (!secret) return null;
+  const observerHand = game.players?.[observerSeat]?.hand || [];
+  if (observerHand.some((c) => c.id === secret.id)) return { seat: observerSeat, confidence: 1, reason: "self" };
+  if (observerSeat === game.napoleon) return { seat: game.secretaryOwner, confidence: 0.92, reason: "napoleon-knowledge" };
+
+  const mem = memory || aiBuildCardMemory(game, observerSeat);
+  const scores = Array.from({ length: 5 }, (_, seat) => ({ seat, score: seat === game.napoleon ? -99 : 0, eliminated: seat === game.napoleon }));
+  for (const item of scores) {
+    if (item.eliminated) continue;
+    if (secret.suit && mem.voids?.[item.seat]?.[secret.suit]) {
+      item.eliminated = true;
+      item.score = -99;
+    }
+  }
+
+  const histories = Array.isArray(game.trickHistory) ? game.trickHistory : [];
+  for (const trick of histories) {
+    const plays = trick.plays || [];
+    const leadSuit = trick.leadSuit || aiLeadSuitFromPlays(plays);
+    let bestSoFar = plays[0] || null;
+    for (let i = 1; i < plays.length; i += 1) {
+      const play = plays[i];
+      const item = scores[play.seat];
+      if (!item || item.eliminated || play.seat === game.napoleon) continue;
+      const beforeWinner = bestSoFar?.seat;
+      const beforeNap = beforeWinner === game.napoleon;
+      const beforeStrength = bestSoFar ? cardStrength(bestSoFar.card, game, leadSuit) : -1;
+      const ownStrength = cardStrength(play.card, game, leadSuit);
+      const winsNow = ownStrength > beforeStrength;
+      const isPoint = isHeadCard(play.card);
+      if (beforeNap && !winsNow && isPoint) item.score += 2.2;
+      if (beforeNap && winsNow) item.score -= 1.6;
+      if (!beforeNap && beforeWinner !== null && !winsNow && isPoint && trick.winner === game.napoleon) item.score += 1.2;
+      if (trick.winner === play.seat && trick.heads >= 2) item.score -= 0.35;
+      if (winsNow) bestSoFar = play;
+    }
+  }
+
+  // 持有秘書牌的人在秘書牌花色被領出時通常會跟牌；若一直沒出現但某人尚未被排除，給一點機率而不是偷看。
+  const possible = scores.filter((x) => !x.eliminated).sort((a, b) => b.score - a.score);
+  if (!possible.length) return null;
+  const best = possible[0];
+  const second = possible[1]?.score ?? -1.5;
+  const gap = best.score - second;
+  const difficulty = Number(game.settings?.difficulty || 10);
+  const confidence = aiClamp(0.26 + gap * 0.12 + (5 - possible.length) * 0.08 + difficulty * 0.012, 0.18, 0.88);
+  if (possible.length === 1) return { seat: best.seat, confidence: Math.max(confidence, 0.72), reason: "elimination" };
+  if (confidence < 0.56) return null;
+  return { seat: best.seat, confidence, reason: "behavior" };
 }
 
 function aiLeadSuitFromPlays(plays) {
@@ -1737,6 +1875,15 @@ function aiScoreLeadCard(game, seat, card, ctx) {
   if (allyVoids > 0 && !isTrump && !isJoker && !isPoint) score += allyVoids * (ctx.contractMode.mode === "chase" ? 4.2 : 2.4);
   if (allyVoids > 0 && isPoint && !master) score -= allyVoids * 3.2;
 
+  if (ctx.secretaryGuess && ctx.myTeam === "def" && ctx.secretaryGuess.confidence >= 0.62 && seat !== ctx.secretaryGuess.seat) {
+    if (!isPoint && !isTrump && !isJoker && card.suit && aiLikelyVoid(ctx, ctx.secretaryGuess.seat, card.suit)) score += 4.5;
+    if (isPoint && card.suit && aiLikelyVoid(ctx, ctx.secretaryGuess.seat, card.suit)) score -= 5.5;
+  }
+
+  if (ctx.personality?.type === "aggressive" && likelyWin >= 0.62) score += 2.6;
+  if (ctx.personality?.type === "conservative" && isPoint && likelyWin < 0.86) score -= 3.4;
+  if (ctx.personality?.type === "blocker" && ctx.myTeam === "def" && likelyWin >= 0.65) score += 2.8;
+
   if (ctx.contractMode.mode === "protect") {
     if (likelyWin >= 0.78) score += 6 + (master ? 3 : 0);
     if (isPoint && likelyWin < 0.86) score -= 8;
@@ -1839,6 +1986,18 @@ function aiScoreFollowCard(game, seat, card, ctx) {
     }
   }
 
+  // 推測秘書：防家若懷疑某人是秘書，會避免把頭送給他，必要時也更願意攔截。
+  if (ctx.secretaryGuess && ctx.myTeam === "def" && ctx.secretaryGuess.confidence >= 0.62) {
+    if (ctx.currentWinner === ctx.secretaryGuess.seat && !candidateWins && isPoint) score -= 13 * ctx.secretaryGuess.confidence;
+    if (ctx.currentWinner === ctx.secretaryGuess.seat && candidateWins) score += 9 * ctx.secretaryGuess.confidence;
+    if (ctx.seatsAfter.includes(ctx.secretaryGuess.seat) && isPoint && !candidateWins) score -= 5 * ctx.secretaryGuess.confidence;
+  }
+
+  if (ctx.personality?.type === "support" && allyWinning && !candidateWins && isPoint && !voidCutDanger) score += 5;
+  if (ctx.personality?.type === "aggressive" && candidateWins && !allyWinning) score += 3.5;
+  if (ctx.personality?.type === "conservative" && (isTrump || isJoker) && !ctx.late && !ctx.actingLast) score -= 3.5;
+  if (ctx.personality?.type === "blocker" && ctx.myTeam === "def" && candidateWins) score += 4;
+
   // 保約 / 擋約模式：局勢越接近成敗線，越明確搶頭或防守。
   if (ctx.contractMode.mode === "protect") {
     if (allyWinning && !candidateWins && isPoint && !voidCutDanger) score += 10;
@@ -1886,16 +2045,16 @@ function aiScoreFollowCard(game, seat, card, ctx) {
 }
 
 function aiPickScoredCard(scored, difficulty) {
-  const spread = Math.max(0.55, (21 - difficulty) * 1.2);
+  const spread = Math.max(0.34, (21 - difficulty) * 1.32);
   const withNoise = scored.map((item) => ({
     card: item.card,
     score: item.score + (Math.random() - 0.5) * spread
   })).sort((a, b) => b.score - a.score);
 
-  if (difficulty <= 8 && withNoise.length > 1 && Math.random() < 0.12) {
+  if (difficulty <= 8 && withNoise.length > 1 && Math.random() < 0.16) {
     return randomItem(withNoise.slice(0, Math.min(3, withNoise.length))).card;
   }
-  if (difficulty <= 13 && withNoise.length > 1 && Math.random() < 0.045) {
+  if (difficulty <= 13 && withNoise.length > 1 && Math.random() < 0.055) {
     return withNoise[1].card;
   }
   return withNoise[0].card;
@@ -1931,8 +2090,14 @@ function aiTeamView(game, targetSeat, observerSeat) {
   if (targetSeat === null || targetSeat === undefined) return null;
   if (targetSeat === game.napoleon) return "nap";
   if (game.secretaryRevealed) return teamOf(game, targetSeat);
-  // 拿破崙知道秘書是誰；秘書本人也知道自己同隊。其他電腦不偷看暗秘書。
+  // 拿破崙與秘書本人知道自己的陣營；其他人只能靠行為與缺門推測。
   if (observerSeat === game.napoleon || targetSeat === observerSeat) return teamOf(game, targetSeat);
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty >= 14 && observerSeat !== null && observerSeat !== undefined) {
+    const guess = aiInferSecretaryOwner(game, observerSeat);
+    const threshold = difficulty >= 18 ? 0.58 : 0.68;
+    if (guess && guess.seat === targetSeat && guess.confidence >= threshold) return "nap";
+  }
   return "def";
 }
 
