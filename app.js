@@ -1548,7 +1548,11 @@ function aiChoosePlay(game, seat) {
   if (timelySmallJoker) return timelySmallJoker;
 
   const context = aiBuildPlayContext(game, seat);
-  const scored = legal.map((card) => ({ card, score: aiScorePlayCard(game, seat, card, context) }));
+  const scored = legal.map((card) => {
+    const baseScore = aiScorePlayCard(game, seat, card, context);
+    const advancedScore = aiAdvancedPlayAdjustment(game, seat, card, context, legal);
+    return { card, score: baseScore + advancedScore };
+  });
   return aiPickScoredCard(scored, difficulty);
 }
 
@@ -2042,6 +2046,108 @@ function aiScoreFollowCard(game, seat, card, ctx) {
   }
 
   return score;
+}
+
+
+function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
+  if (!legal?.length) return 0;
+  const difficulty = ctx.difficulty || Number(game.settings?.difficulty || 10);
+  const skill = aiClamp((difficulty - 9) / 11, 0, 1);
+  if (skill <= 0) return 0;
+
+  const trickLen = game.trick?.length || 0;
+  const candidateWins = trickLen > 0 ? wouldWin(game, card) : aiLikelyLeadWin(game, seat, card) >= 0.72;
+  const isPoint = isHeadCard(card);
+  const isTrump = Boolean(game.trump && game.trump !== "NT" && card.suit === game.trump);
+  const isJoker = Boolean(card.joker);
+  const leadSuit = ctx.leadSuit || card.suit || null;
+  const currentEnemyWinning = trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam;
+  const currentAllyWinning = trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam;
+  const pointsWithCard = ctx.pointsOnTable + (isPoint ? 1 : 0);
+  const legalWinning = trickLen > 0
+    ? legal.filter((c) => wouldWin(game, c)).sort((a, b) => cardPlayValue(a, game) - cardPlayValue(b, game))
+    : legal.filter((c) => aiLikelyLeadWin(game, seat, c) >= 0.72).sort((a, b) => cardPlayValue(a, game) - cardPlayValue(b, game));
+  const cheapWinner = legalWinning[0] || null;
+  const bestLoser = legal
+    .filter((c) => trickLen === 0 ? aiLikelyLeadWin(game, seat, c) < 0.72 : !wouldWin(game, c))
+    .sort((a, b) => cardPlayValue(b, game) - cardPlayValue(a, game))[0] || null;
+
+  let score = 0;
+
+  // 高難度電腦會用「最低成本吃牌」：能吃回來就盡量用最小的贏牌，避免過度浪費鬼牌、王牌或秘書牌。
+  if (candidateWins && cheapWinner) {
+    const cheapest = cheapWinner.id === card.id;
+    const overpay = Math.max(0, cardPlayValue(card, game) - cardPlayValue(cheapWinner, game));
+    if (currentEnemyWinning || pointsWithCard >= 2 || ctx.actingLast || ctx.late) {
+      if (cheapest) score += (5.5 + pointsWithCard * 1.8) * skill;
+      else if (pointsWithCard <= 1 && !ctx.actingLast) score -= aiClamp(overpay / 5, 0, 8) * skill;
+    }
+    if (!currentEnemyWinning && !ctx.late && pointsWithCard === 0 && !cheapest) score -= aiClamp(overpay / 4, 0, 7) * skill;
+  }
+
+  // 如果盟友已經穩吃，本家不應該把關鍵控制牌蓋上去；但可以安全餵頭。
+  if (currentAllyWinning) {
+    const allyCanBeOvertaken = ctx.currentWinner !== null
+      ? aiFutureOvertakeRisk(game, seat, game.trick.find((p) => p.seat === ctx.currentWinner)?.card || card, ctx) > 0.55
+      : false;
+    if (candidateWins && !allyCanBeOvertaken) score -= (10 + cardPlayValue(card, game) * 0.18) * skill;
+    if (!candidateWins && isPoint && (ctx.actingLast || ctx.opponentsAfter === 0)) score += 8 * skill;
+  }
+
+  // 關鍵控制牌保留：非必要時保留大鬼、小鬼、秘書牌、最後一張王牌或已知最大牌，讓後面保約/擋約更有工具。
+  const control = aiControlCardValue(game, seat, card, ctx);
+  if (control > 0 && !ctx.late) {
+    const urgent = ctx.contractMode.mode === "chase" || ctx.contractMode.mode === "block" || pointsWithCard >= 2;
+    if (!candidateWins || (!urgent && pointsWithCard === 0)) score -= control * (0.52 + skill * 0.42);
+    if (candidateWins && urgent) score += control * 0.22 * skill;
+  }
+
+  // 高難度會看末段手牌計畫：剩 4 張以內時，能確定收頭的 master 牌要及早兌現；不能安全出的頭牌要避免送出。
+  if ((ctx.handSize || 0) <= 4) {
+    const master = aiIsLikelyMaster(game, seat, card, leadSuit, ctx.memory);
+    if (master && (isPoint || pointsWithCard > 0)) score += (9 + pointsWithCard * 3) * skill;
+    if (!master && isPoint && !candidateWins && !currentAllyWinning) score -= 10 * skill;
+    if (bestLoser?.id === card.id && !isPoint && !isTrump && !isJoker) score += 3.5 * skill;
+  }
+
+  // 缺門推測加強：如果後手對手已缺首引花色，墊頭或領頭牌要更保守；若後手盟友缺門，則可用低牌引導切牌。
+  if (leadSuit && !isTrump && !isJoker) {
+    const futureOpponents = ctx.seatsAfter.filter((s) => aiTeamView(game, s, seat) !== ctx.myTeam);
+    const futureAllies = ctx.seatsAfter.filter((s) => aiTeamView(game, s, seat) === ctx.myTeam);
+    const oppVoids = aiCountLikelyVoids(ctx, futureOpponents, leadSuit);
+    const allyVoids = aiCountLikelyVoids(ctx, futureAllies, leadSuit);
+    if (oppVoids > 0 && isPoint && !candidateWins) score -= (6 + oppVoids * 4) * skill;
+    if (allyVoids > 0 && !isPoint && !candidateWins && ctx.myTeam === "nap") score += (3 + allyVoids * 2) * skill;
+  }
+
+  // 擋約/保約再細化：臨界局面下，不只是看當前一墩，而是看「剩餘可取得頭數」。
+  const nearLine = ctx.myTeam === "nap" ? ctx.napNeeds <= Math.max(2, pointsWithCard + 1) : ctx.napNeeds <= Math.max(3, pointsWithCard + 2);
+  if (nearLine) {
+    if (ctx.myTeam === "nap") {
+      if (candidateWins && pointsWithCard > 0) score += (9 + pointsWithCard * 5) * skill;
+      if (!candidateWins && isPoint && !currentAllyWinning) score -= 12 * skill;
+    } else {
+      if (currentEnemyWinning && candidateWins) score += (11 + pointsWithCard * 5) * skill;
+      if (currentEnemyWinning && !candidateWins && isPoint) score -= 13 * skill;
+    }
+  }
+
+  return score;
+}
+
+function aiControlCardValue(game, seat, card, ctx) {
+  let value = 0;
+  if (card.id === game.secretaryCardId) value += 18;
+  if (card.joker) value += card.bigJoker ? 20 : 16;
+  const isTrump = Boolean(game.trump && game.trump !== "NT" && card.suit === game.trump);
+  if (isTrump) {
+    const trumpInHand = (game.players?.[seat]?.hand || []).filter((c) => c.suit === game.trump || c.joker).length;
+    value += card.value >= 12 ? 8 : 4;
+    if (trumpInHand <= 2) value += 7;
+  }
+  if (card.suit && aiIsLikelyMaster(game, seat, card, card.suit, ctx.memory)) value += isHeadCard(card) ? 9 : 5;
+  if (game.settings?.jokerLowLast3 && card.joker && game.trickNo >= 6) value *= card.id === "RJ" ? 0.55 : 0.75;
+  return value;
 }
 
 function aiPickScoredCard(scored, difficulty) {
