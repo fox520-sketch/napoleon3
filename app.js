@@ -1453,9 +1453,58 @@ function aiChooseTrump(game, seat) {
 }
 
 function aiChooseBuried(game, seat) {
-  const hand = game.players[seat].hand;
-  const sorted = [...hand].sort((a, b) => aiDiscardValue(a, game, seat) - aiDiscardValue(b, game, seat));
-  return sorted.slice(0, 4).map((c) => c.id);
+  const hand = game.players[seat].hand || [];
+  if (hand.length <= 4) return hand.map((c) => c.id);
+
+  // V6: 拿破崙換底牌改用組合評分。不是只丟單張最低分，而是考慮能否清短門、保留王牌控制、避免把頭送進底牌。
+  let best = null;
+  for (let a = 0; a < hand.length - 3; a += 1) {
+    for (let b = a + 1; b < hand.length - 2; b += 1) {
+      for (let c = b + 1; c < hand.length - 1; c += 1) {
+        for (let d = c + 1; d < hand.length; d += 1) {
+          const combo = [hand[a], hand[b], hand[c], hand[d]];
+          const score = aiBurialComboScore(game, seat, combo);
+          if (!best || score < best.score) best = { combo, score };
+        }
+      }
+    }
+  }
+  return (best?.combo || [...hand].sort((a, b) => aiDiscardValue(a, game, seat) - aiDiscardValue(b, game, seat)).slice(0, 4)).map((card) => card.id);
+}
+
+function aiBurialComboScore(game, seat, combo) {
+  const hand = game.players?.[seat]?.hand || [];
+  const kept = hand.filter((card) => !combo.some((x) => x.id === card.id));
+  const buriedMode = game.settings?.buriedMode || "addContract";
+  const trump = game.trump;
+  let score = combo.reduce((sum, card) => sum + aiDiscardValue(card, game, seat), 0);
+  const buriedHeads = countPoints(combo);
+  const buriedTrump = combo.filter((c) => trump && trump !== "NT" && c.suit === trump).length;
+  const buriedJokers = combo.filter((c) => c.joker).length;
+
+  // 多數玩法底牌頭會增加成約或讓防家收益，所以高難度拿破崙不輕易蓋牌頭。
+  if (buriedMode === "addContract") score += buriedHeads * 9;
+  else if (buriedMode === "defenders") score += buriedHeads * 14;
+  else score += buriedHeads * 3;
+  score += buriedJokers * 80 + buriedTrump * 10;
+
+  for (const suit of ["S", "H", "D", "C"]) {
+    const before = hand.filter((c) => c.suit === suit).length;
+    const after = kept.filter((c) => c.suit === suit).length;
+    const buriedSuitHeads = combo.filter((c) => c.suit === suit && isHeadCard(c)).length;
+    const suitIsTrump = trump && trump !== "NT" && suit === trump;
+    if (!suitIsTrump && before > 0 && after === 0 && buriedSuitHeads === 0) score -= 11; // 清短門，之後可切牌。
+    if (!suitIsTrump && before <= 2 && after === 0) score -= 3;
+    if (suitIsTrump && after < 2 && before >= 3) score += 9; // 不把王牌控制清太薄。
+    if (!suitIsTrump && buriedSuitHeads > 0 && before <= 2) score += 5; // 避免短門頭牌埋掉讓成約變硬。
+  }
+
+  // 保留至少一張低牌作為出牌退路，不要手上只剩高頭牌與王牌。
+  const lowExitCards = kept.filter((c) => !c.joker && !isHeadCard(c) && !(trump && trump !== "NT" && c.suit === trump) && c.value <= 9).length;
+  if (lowExitCards === 0) score += 8;
+  else if (lowExitCards >= 3) score -= 2;
+
+  return score;
 }
 
 function aiDiscardValue(card, game, seat) {
@@ -1574,7 +1623,7 @@ function aiBuildPlayContext(game, seat) {
   const midLate = (game.trickNo || 0) >= 5;
   const player = game.players?.[seat] || { hand: [] };
   const handHeads = countPoints(player.hand || []);
-  const trumpCount = game.trump && game.trump !== "NT" ? (player.hand || []).filter((c) => c.suit === game.trump).length : 0;
+  const trumpCount = game.trump && game.trump !== "NT" ? (player.hand || []).filter((c) => c.suit === game.trump || c.joker).length : 0;
   const napUrgency = aiClamp(napNeeds / Math.max(1, remainingHeads + pointsOnTable), 0, 1.6);
   const defenderUrgency = aiClamp((4 - napNeeds) / 4, 0, 1.5);
   const remainingBySuit = aiRemainingBySuit(game, seat);
@@ -1582,6 +1631,8 @@ function aiBuildPlayContext(game, seat) {
   const secretaryGuess = aiInferSecretaryOwner(game, seat, memory);
   const contractMode = aiContractMode(game, seat, totals, pointsOnTable, remainingHeads, napNeeds, myTeam);
   const personality = aiPersonality(seat);
+  const trumpState = aiTrumpControlState(game, seat, memory);
+  const suitPlan = aiSuitPlan(game, seat, myTeam, memory);
   return {
     totals,
     pointsOnTable,
@@ -1608,6 +1659,8 @@ function aiBuildPlayContext(game, seat) {
     secretaryGuess,
     contractMode,
     personality,
+    trumpState,
+    suitPlan,
     handSize: player.hand?.length || 0
   };
 }
@@ -1845,6 +1898,133 @@ function aiIsLikelyMaster(game, seat, card, leadSuit = null, memory = null) {
   return unseen.every((c) => cardStrength(c, game, suit) <= strength);
 }
 
+function aiTrumpControlState(game, seat, memory = null) {
+  const trump = game.trump;
+  const hand = game.players?.[seat]?.hand || [];
+  if (!trump || trump === "NT") {
+    return { enabled: false, myCount: hand.filter((c) => c.joker).length, unseenCount: memory?.remainingBySuit?.JOKER || 0, playedCount: memory?.playedBySuit?.JOKER || 0, myHighCount: hand.filter((c) => c.joker).length, opponentsLikelyHave: 0 };
+  }
+  const mem = memory || aiBuildCardMemory(game, seat);
+  const myTrumpCards = hand.filter((c) => c.joker || c.suit === trump);
+  const myHighCount = myTrumpCards.filter((c) => c.joker || c.value >= 11).length;
+  const unseenTrump = (mem.remaining || []).filter((c) => c.joker || c.suit === trump);
+  const playedTrump = (mem.playedBySuit?.[trump] || 0) + (mem.playedBySuit?.JOKER || 0);
+  return {
+    enabled: true,
+    myCount: myTrumpCards.length,
+    myHighCount,
+    unseenCount: unseenTrump.length,
+    highUnseenCount: unseenTrump.filter((c) => c.joker || c.value >= 11).length,
+    playedCount: playedTrump,
+    opponentsLikelyHave: Math.max(0, unseenTrump.length - myTrumpCards.length)
+  };
+}
+
+function aiSuitPlan(game, seat, myTeam, memory = null) {
+  const hand = game.players?.[seat]?.hand || [];
+  const mem = memory || aiBuildCardMemory(game, seat);
+  const plan = {};
+  for (const suit of ["S", "H", "D", "C"]) {
+    const cards = hand.filter((c) => c.suit === suit);
+    const lowCards = cards.filter((c) => !isHeadCard(c) && c.value <= 9).length;
+    const heads = cards.filter((c) => isHeadCard(c)).length;
+    const masters = cards.filter((c) => aiIsLikelyMaster(game, seat, c, suit, mem)).length;
+    plan[suit] = {
+      count: cards.length,
+      heads,
+      lowCards,
+      masters,
+      remaining: mem.remainingBySuit?.[suit] || 0,
+      remainingHeads: mem.remainingHeadsBySuit?.[suit] || 0,
+      voidOpponents: Array.from({ length: 5 }, (_, s) => s).filter((s) => s !== seat && aiTeamView(game, s, seat) !== myTeam && mem.voids?.[s]?.[suit]).length,
+      voidAllies: Array.from({ length: 5 }, (_, s) => s).filter((s) => s !== seat && aiTeamView(game, s, seat) === myTeam && mem.voids?.[s]?.[suit]).length
+    };
+  }
+  return plan;
+}
+
+function aiOpeningLeadAdjustment(game, seat, card, ctx) {
+  if ((game.trickNo || 0) > 1 || !card?.suit || card.joker) return 0;
+  const suitPlan = ctx.suitPlan?.[card.suit];
+  if (!suitPlan) return 0;
+  const isTrump = Boolean(game.trump && game.trump !== "NT" && card.suit === game.trump);
+  const isPoint = isHeadCard(card);
+  let score = 0;
+
+  // 前兩墩：高難度更會用低牌探花色，不一開始就把不安全的頭牌送出去。
+  if (!isTrump && !isPoint && suitPlan.count >= 3) score += 4.2;
+  if (!isTrump && !isPoint && suitPlan.count === 1) score += 2.4; // 清短門。
+  if (!isTrump && isPoint && suitPlan.remaining > 5 && suitPlan.masters === 0) score -= 6.5;
+  if (isTrump && ctx.trumpState?.myCount <= 2) score -= 5.5;
+  if (ctx.myTeam === "nap" && isTrump && ctx.trumpState?.myCount >= 5 && ctx.contractMode.mode !== "protect") score += 4.8; // 王牌長時可先抽王牌。
+  if (ctx.myTeam === "def" && isTrump && game.napoleon !== seat && ctx.contractMode.mode !== "block") score -= 4.5; // 防家少替拿破崙抽王牌。
+  return score;
+}
+
+function aiTrumpControlAdjustment(game, seat, card, ctx, candidateWins, pointsWithCard) {
+  const st = ctx.trumpState;
+  if (!st?.enabled) return 0;
+  const isTrump = Boolean(card.joker || card.suit === game.trump);
+  if (!isTrump) return 0;
+  let score = 0;
+  const isPoint = isHeadCard(card);
+  const early = (game.trickNo || 0) <= 4;
+  const hasControl = st.myCount >= 4 || st.myHighCount >= 2;
+
+  if (ctx.myTeam === "nap") {
+    if (hasControl && (ctx.contractMode.mode === "chase" || ctx.napUrgency > 0.55)) score += candidateWins ? 5.5 : 1.5;
+    if (ctx.contractMode.mode === "protect" && early && !isPoint && !candidateWins) score -= 5;
+  } else {
+    if (early && !candidateWins && pointsWithCard === 0) score -= 6;
+    if (ctx.contractMode.mode === "block" && candidateWins && pointsWithCard >= 1) score += 7;
+    if (ctx.defenderUrgency < 0.35 && early) score -= 3.5;
+  }
+  if (st.myCount <= 1 && !ctx.actingLast && !ctx.late && pointsWithCard <= 1) score -= 8;
+  if (card.joker && game.settings?.jokerLowLast3 && game.trickNo === 6) score += card.id === "RJ" ? 7 : 3;
+  return score;
+}
+
+function aiEndgamePlanAdjustment(game, seat, card, ctx, candidateWins, pointsWithCard) {
+  const remainingTricks = Math.max(1, 10 - (game.trickNo || 0));
+  const hand = game.players?.[seat]?.hand || [];
+  if (remainingTricks > 4 && hand.length > 4) return 0;
+  const isPoint = isHeadCard(card);
+  const master = card.suit ? aiIsLikelyMaster(game, seat, card, card.suit, ctx.memory) : Boolean(card.joker || card.id === game.secretaryCardId);
+  let score = 0;
+
+  // 殘局：可穩收的頭牌要收，不能穩收的頭牌要藏，沒用的低牌優先脫手。
+  if (master && isPoint) score += 12;
+  if (master && !isPoint && ctx.handHeads >= remainingTricks) score += 4;
+  if (!master && isPoint && !candidateWins) score -= 12;
+  if (!isPoint && !candidateWins && ctx.pointsOnTable === 0) score += 4;
+  if (ctx.myTeam === "nap" && ctx.napNeeds <= pointsWithCard && candidateWins) score += 18;
+  if (ctx.myTeam === "def" && ctx.napNeeds <= pointsWithCard + 1 && candidateWins) score += 16;
+  return score;
+}
+
+function aiCooperationAdjustment(game, seat, card, ctx, candidateWins, pointsWithCard) {
+  let score = 0;
+  const isPoint = isHeadCard(card);
+  const currentAllyWinning = ctx.currentWinnerTeam === ctx.myTeam;
+  const currentEnemyWinning = ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam;
+  const futureAllies = ctx.seatsAfter.filter((s) => aiTeamView(game, s, seat) === ctx.myTeam);
+  const futureOpponents = ctx.seatsAfter.filter((s) => aiTeamView(game, s, seat) !== ctx.myTeam);
+  const suit = ctx.leadSuit || card.suit || null;
+
+  if (currentAllyWinning && !candidateWins && isPoint && futureOpponents.length === 0) score += 10;
+  if (currentAllyWinning && candidateWins && pointsWithCard <= 1) score -= 9;
+  if (currentEnemyWinning && candidateWins && pointsWithCard >= 1) score += 6;
+
+  // 若後手盟友已缺門，低牌引導切牌；若後手敵人缺門，頭牌更保守。
+  if (suit && !card.joker && !(game.trump && game.trump !== "NT" && card.suit === game.trump)) {
+    const allyVoid = aiCountLikelyVoids(ctx, futureAllies, suit);
+    const oppVoid = aiCountLikelyVoids(ctx, futureOpponents, suit);
+    if (allyVoid > 0 && !isPoint && !candidateWins) score += 4 * allyVoid;
+    if (oppVoid > 0 && isPoint && !candidateWins) score -= 7 * oppVoid;
+  }
+  return score;
+}
+
 function aiScoreLeadCard(game, seat, card, ctx) {
   const base = cardPlayValue(card, game);
   const isPoint = isHeadCard(card);
@@ -1860,6 +2040,7 @@ function aiScoreLeadCard(game, seat, card, ctx) {
   const allyVoids = aiCountLikelyVoids(ctx, futureAllies, leadSuitForCard);
   const vulnerableLead = Boolean(leadSuitForCard && !isTrump && opponentVoids > 0);
   let score = 0;
+  score += aiOpeningLeadAdjustment(game, seat, card, ctx);
 
   // 領牌原則：早期先探牌與建立長門；中後期才積極收頭。
   score -= base * 0.18;
@@ -2131,6 +2312,10 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
       if (currentEnemyWinning && !candidateWins && isPoint) score -= 13 * skill;
     }
   }
+
+  score += aiTrumpControlAdjustment(game, seat, card, ctx, candidateWins, pointsWithCard) * skill;
+  score += aiEndgamePlanAdjustment(game, seat, card, ctx, candidateWins, pointsWithCard) * skill;
+  score += aiCooperationAdjustment(game, seat, card, ctx, candidateWins, pointsWithCard) * skill;
 
   return score;
 }
