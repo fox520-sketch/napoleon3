@@ -834,7 +834,7 @@ function applyAction(game, action) {
     return chooseSecretary(game, seat, action.payload?.cardId);
   }
   if (game.phase === PHASE.PLAY && game.currentPlayer === seat && action.type === "playCard") {
-    return playCard(game, seat, action.payload?.cardId, action.payload?.leadSuit || null);
+    return playCard(game, seat, action.payload?.cardId, action.payload?.leadSuit || null, action.payload?.aiReason || null);
   }
   return false;
 }
@@ -994,7 +994,7 @@ function chooseSecretary(game, seat, cardId) {
   return true;
 }
 
-function playCard(game, seat, cardId, chosenLeadSuit = null) {
+function playCard(game, seat, cardId, chosenLeadSuit = null, aiReason = null) {
   const player = game.players[seat];
   const card = player.hand.find((c) => c.id === cardId);
   if (!card) return false;
@@ -1019,6 +1019,9 @@ function playCard(game, seat, cardId, chosenLeadSuit = null) {
     appendLog(game, `${player.name} 打出秘書牌，秘書公開！`);
   }
   appendLog(game, `${player.name} 出 ${cardLong(card)}。`);
+  if (player.type === "bot" && aiReason && Number(game.settings?.difficulty || 10) >= 16) {
+    appendLog(game, `AI思路：${player.name} ${aiReason}`);
+  }
 
   if (game.trick.length === 5) {
     settleTrick(game);
@@ -1244,7 +1247,8 @@ function getBotAction(game) {
   if (game.phase === PHASE.SECRETARY && game.napoleon === seat) return { uid: player.uid, seat, type: "chooseSecretary", payload: { cardId: aiChooseSecretary(game, seat) } };
   if (game.phase === PHASE.PLAY) {
     const card = aiChoosePlay(game, seat);
-    return { uid: player.uid, seat, type: "playCard", payload: { cardId: card.id, leadSuit: card.suit || aiBestSuit(game.players[seat].hand) } };
+    const aiReason = aiExplainPlayChoice(game, seat, card);
+    return { uid: player.uid, seat, type: "playCard", payload: { cardId: card.id, leadSuit: card.suit || aiBestSuit(game.players[seat].hand), aiReason } };
   }
   return null;
 }
@@ -2323,6 +2327,7 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
   score += aiCooperationAdjustment(game, seat, card, ctx, candidateWins, pointsWithCard) * skill;
   score += aiV7RiskTempoAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV7SecretarySignalAdjustment(game, seat, card, ctx, candidateWins, pointsWithCard) * skill;
+  score += aiV8ProjectionAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
 
   return score;
 }
@@ -2455,6 +2460,159 @@ function aiV7StrongerUnseenCount(game, seat, card, leadSuit = null) {
   const suit = leadSuit || (card.joker ? null : card.suit);
   const strength = cardStrength(card, game, suit);
   return aiUnseenCards(game, seat).filter((c) => cardStrength(c, game, suit) > strength).length;
+}
+
+
+function aiV8ProjectionAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 12) return 0;
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const isPoint = isHeadCard(card);
+  const isControl = aiControlCardValue(game, seat, card, ctx) >= 14;
+  const trickLen = game.trick?.length || 0;
+  const currentEnemyWinning = trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam;
+  const currentAllyWinning = trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam;
+  const tacticalWeight = aiClamp((difficulty - 11) / 9, 0, 1.25);
+  let score = 0;
+
+  // V8: 以剩餘牌與缺門推測，估算這張牌是否真的能把本墩守到最後。
+  if (candidateWins || (trickLen === 0 && projection.holdProb > 0.62)) {
+    if (projection.holdProb >= 0.78) score += (4 + pointsWithCard * 2.8) * tacticalWeight;
+    if (projection.holdProb < 0.46) score -= (7 + pointsWithCard * 3.2 + (isPoint ? 4 : 0)) * tacticalWeight;
+    if (isControl && projection.holdProb < 0.58 && pointsWithCard <= 1 && !ctx.actingLast) score -= 8 * tacticalWeight;
+  }
+
+  // V8: 盟友可能守住時才餵頭；若後手對手的反吃概率高，避免把頭送出去。
+  if (currentAllyWinning && !candidateWins) {
+    if (isPoint && projection.allyHoldProb >= 0.72) score += (9 + pointsWithCard * 1.8) * tacticalWeight;
+    if (isPoint && projection.enemySwingProb >= 0.42) score -= (12 + pointsWithCard * 2) * tacticalWeight;
+  }
+  if (currentEnemyWinning && !candidateWins && isPoint) {
+    score -= (10 + projection.enemyHoldProb * 9) * tacticalWeight;
+  }
+
+  // V8: 低成本勝牌若已足夠，避免用更大的牌重複過付。
+  const winning = (legal || []).filter((c) => trickLen > 0 ? wouldWin(game, c) : aiLikelyLeadWin(game, seat, c) >= 0.68)
+    .sort((a, b) => cardPlayValue(a, game) - cardPlayValue(b, game));
+  if (candidateWins && winning.length > 1) {
+    const cheap = winning[0];
+    const overpay = cardPlayValue(card, game) - cardPlayValue(cheap, game);
+    if (cheap.id !== card.id && projection.holdProb < 0.72 && pointsWithCard <= 1) score -= aiClamp(overpay / 3, 0, 8) * tacticalWeight;
+  }
+
+  // V8: 出門花色選擇。若該花色後手敵方缺門壓力高，頭牌領出更危險；若隊友缺門，低牌領出可製造切牌機會。
+  const leadSuit = ctx.leadSuit || (card.joker ? null : card.suit);
+  if (leadSuit && !card.joker && !(game.trump && game.trump !== "NT" && card.suit === game.trump)) {
+    const enemyCut = projection.enemyCutPressure;
+    const allyCut = projection.allyCutPressure;
+    if (isPoint && enemyCut > 0.35) score -= (8 + enemyCut * 10) * tacticalWeight;
+    if (!isPoint && allyCut > 0.35 && projection.teamAfterPlay === ctx.myTeam) score += (4 + allyCut * 5) * tacticalWeight;
+  }
+
+  // V8: 保約 / 擋約臨界線。剩餘頭數不足時，勝率高的頭牌要兌現；勝率低的頭牌要藏。
+  if (ctx.contractMode.mode === "protect" || ctx.contractMode.mode === "block" || ctx.contractMode.mode === "chase") {
+    if (isPoint && projection.holdProb >= 0.82) score += (8 + pointsWithCard * 2) * tacticalWeight;
+    if (isPoint && projection.holdProb < 0.45 && !currentAllyWinning) score -= (11 + pointsWithCard * 2) * tacticalWeight;
+  }
+
+  return score;
+}
+
+function aiV8ProjectedTrickOutcome(game, seat, card, ctx) {
+  const trickLen = game.trick?.length || 0;
+  const leadSuit = ctx.leadSuit || (card.joker ? null : card.suit);
+  const afterTeam = aiV8TeamAfterCandidate(game, seat, card, ctx);
+  const futureSeats = ctx.seatsAfter || [];
+  let enemySwingProb = 0;
+  let allyProtectProb = 0;
+  let enemyCutPressure = 0;
+  let allyCutPressure = 0;
+
+  for (const s of futureSeats) {
+    const team = aiTeamView(game, s, seat);
+    const risk = aiV8SeatOvertakeRisk(game, seat, s, card, ctx, leadSuit);
+    const cut = leadSuit ? aiV8SeatCutPressure(game, seat, s, ctx, leadSuit) : 0;
+    if (team === ctx.myTeam) {
+      allyProtectProb += risk * 0.55;
+      allyCutPressure += cut;
+    } else {
+      enemySwingProb += risk;
+      enemyCutPressure += cut;
+    }
+  }
+
+  enemySwingProb = aiClamp(enemySwingProb, 0, 0.96);
+  allyProtectProb = aiClamp(allyProtectProb, 0, 0.72);
+  const baseHold = trickLen === 0 ? aiLikelyLeadWin(game, seat, card) : (wouldWin(game, card) ? 0.86 : 0.12);
+  const holdProb = aiClamp(baseHold - enemySwingProb * 0.72 + allyProtectProb * 0.18, 0.02, 0.98);
+  const allyHoldProb = afterTeam === ctx.myTeam ? holdProb : aiClamp(allyProtectProb * 0.75, 0, 0.7);
+  const enemyHoldProb = afterTeam !== ctx.myTeam ? aiClamp(1 - allyProtectProb * 0.55, 0.15, 0.98) : aiClamp(enemySwingProb, 0, 0.95);
+  return {
+    teamAfterPlay: afterTeam,
+    holdProb,
+    allyHoldProb,
+    enemyHoldProb,
+    enemySwingProb,
+    enemyCutPressure: aiClamp(enemyCutPressure, 0, 1.3),
+    allyCutPressure: aiClamp(allyCutPressure, 0, 1.3)
+  };
+}
+
+function aiV8TeamAfterCandidate(game, seat, card, ctx) {
+  const trickLen = game.trick?.length || 0;
+  if (trickLen === 0) return aiLikelyLeadWin(game, seat, card) >= 0.58 ? ctx.myTeam : "unknown";
+  if (wouldWin(game, card)) return ctx.myTeam;
+  return ctx.currentWinnerTeam || "unknown";
+}
+
+function aiV8SeatOvertakeRisk(game, observerSeat, targetSeat, card, ctx, leadSuit) {
+  const unseen = aiUnseenCards(game, observerSeat);
+  if (!unseen.length || targetSeat === observerSeat) return 0;
+  const strength = cardStrength(card, game, leadSuit);
+  const voidConf = leadSuit && ctx.memory?.voids?.[targetSeat]?.[leadSuit]
+    ? 0.42 + (ctx.memory?.voidConfidence?.[targetSeat]?.[leadSuit] || 0) * 0.38
+    : 0;
+  const isTrumpSuit = game.trump && game.trump !== "NT" && leadSuit === game.trump;
+  let stronger = 0;
+  let trumpCuts = 0;
+  for (const c of unseen) {
+    if (cardStrength(c, game, leadSuit) > strength) stronger += 1;
+    if (leadSuit && !isTrumpSuit && (c.joker || c.suit === game.trump)) trumpCuts += 1;
+  }
+  const strongerRatio = stronger / unseen.length;
+  const cutRatio = trumpCuts / unseen.length;
+  const likelyHasLeadSuit = leadSuit && !ctx.memory?.voids?.[targetSeat]?.[leadSuit]
+    ? aiClamp((ctx.memory?.remainingBySuit?.[leadSuit] || 0) / Math.max(1, unseen.length), 0.08, 0.58)
+    : 0;
+  let risk = strongerRatio * (2.2 - likelyHasLeadSuit * 0.4) + voidConf * (0.25 + cutRatio * 1.4);
+  if (card.joker && !(game.settings?.jokerLowLast3 && game.trickNo >= 7)) risk *= card.bigJoker ? 0.16 : 0.28;
+  if (card.id === game.secretaryCardId) risk *= 0.22;
+  return aiClamp(risk, 0, 0.88);
+}
+
+function aiV8SeatCutPressure(game, observerSeat, targetSeat, ctx, suit) {
+  if (!suit || !ctx.memory?.voids?.[targetSeat]?.[suit]) return 0;
+  const unseen = aiUnseenCards(game, observerSeat);
+  const trumpLeft = unseen.filter((c) => c.joker || (game.trump && game.trump !== "NT" && c.suit === game.trump)).length;
+  const voidConf = ctx.memory?.voidConfidence?.[targetSeat]?.[suit] || 0.5;
+  return aiClamp(0.24 + voidConf * 0.44 + trumpLeft / Math.max(1, unseen.length) * 0.42, 0, 0.95);
+}
+
+function aiExplainPlayChoice(game, seat, card) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 16 || !card) return null;
+  const ctx = aiBuildPlayContext(game, seat);
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const point = isHeadCard(card);
+  const wins = (game.trick?.length || 0) ? wouldWin(game, card) : aiLikelyLeadWin(game, seat, card) >= 0.68;
+  const parts = [];
+  if (wins && projection.holdProb >= 0.78) parts.push("判斷這張牌大多能守住本墩");
+  if (wins && projection.holdProb < 0.55) parts.push("雖可暫時領先，但後手有反吃風險");
+  if (ctx.currentWinnerTeam === ctx.myTeam && point && projection.enemySwingProb < 0.32) parts.push("隊友吃墩較穩，適合餵頭");
+  if (point && projection.enemyCutPressure > 0.45) parts.push("注意到後手對手可能缺門切牌，降低送頭風險");
+  if (ctx.contractMode?.label) parts.push(`目前採用${ctx.contractMode.label}節奏`);
+  if (!parts.length) parts.push("以最低成本和後手風險評分後選出");
+  return `選 ${cardLong(card)}：${parts.slice(0, 2).join("；")}。`;
 }
 
 function aiControlCardValue(game, seat, card, ctx) {
