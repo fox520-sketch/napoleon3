@@ -821,7 +821,7 @@ function applyAction(game, action) {
   if (game.pendingClear) return false;
 
   if (game.phase === PHASE.BIDDING && game.currentPlayer === seat) {
-    if (action.type === "pass") return passBid(game, seat);
+    if (action.type === "pass") return passBid(game, seat, action.payload);
     if (action.type === "bid") return makeBid(game, seat, action.payload);
   }
   if (game.phase === PHASE.TRUMP && game.napoleon === seat && action.type === "chooseTrump") {
@@ -887,13 +887,14 @@ function legalBidsAbove(highest, settings) {
   return bids;
 }
 
-function passBid(game, seat) {
+function passBid(game, seat, payload = {}) {
   const p = game.players[seat];
   if (!game.bidding) game.bidding = { highest: null, turn: game.currentPlayer, consecutivePasses: 0, passesWithoutBid: 0 };
   p.lastBid = "Pass";
   if (game.bidding.highest) game.bidding.consecutivePasses = (game.bidding.consecutivePasses || 0) + 1;
   else game.bidding.passesWithoutBid = (game.bidding.passesWithoutBid || 0) + 1;
   appendLog(game, `${p.name} Pass。`);
+  if (p.type === "bot" && payload?.aiReason && Number(game.settings?.difficulty || 10) >= 16) appendLog(game, `AI叫牌：${p.name} ${payload.aiReason}`);
 
   if (game.bidding.highest && game.bidding.consecutivePasses >= 4) return finishBidding(game);
   if (!game.bidding.highest && game.bidding.passesWithoutBid >= 5) {
@@ -916,6 +917,7 @@ function makeBid(game, seat, payload) {
   game.bidding.highest = { seat, amount: bid.amount, suit: bid.suit };
   game.bidding.consecutivePasses = 0;
   appendLog(game, `${p.name} 叫 ${formatBid(bid)}。`);
+  if (p.type === "bot" && payload?.aiReason && Number(game.settings?.difficulty || 10) >= 16) appendLog(game, `AI叫牌：${p.name} ${payload.aiReason}`);
   return advanceBidding(game);
 }
 
@@ -1271,9 +1273,12 @@ function aiBidAction(game, seat) {
   const personality = aiPersonality(seat);
   const profile = aiEvaluateBidProfile(player.hand, game.settings, difficulty);
   const legalAll = legalBidsAbove(highest, game.settings);
-  if (!legalAll.length) return { uid: player.uid, seat, type: "pass", payload: {} };
+  if (!legalAll.length) return { uid: player.uid, seat, type: "pass", payload: { aiReason: "沒有合法叫品可蓋過目前最高叫品，因此 Pass。" } };
 
-  const safeLegal = legalAll.filter((b) => b.amount <= profile.ceiling);
+  const auction = aiV9AuctionDiscipline(game, seat, profile, legalAll, highest, difficulty, personality);
+  if (auction.forcePass) return { uid: player.uid, seat, type: "pass", payload: { aiReason: auction.reason } };
+
+  const safeLegal = legalAll.filter((b) => b.amount <= Math.min(profile.ceiling, auction.maxComfortBid));
   const minimumNeeded = legalAll[0];
   const marginal = profile.ceiling <= minimumNeeded.amount;
   const currentPressure = highest ? Math.max(0, bidValue(highest) - bidValue({ amount: 9, suit: "C" })) / 80 : 0;
@@ -1287,7 +1292,7 @@ function aiBidAction(game, seat) {
 
   // 弱牌、牌型不集中、或只是勉強能蓋過目前叫品時，高難度電腦會更願意 Pass。
   if (!safeLegal.length || profile.confidence < 0.24 || profile.expectedHeads < minimumNeeded.amount - 0.75 || (marginal && Math.random() < passDiscipline)) {
-    return { uid: player.uid, seat, type: "pass", payload: {} };
+    return { uid: player.uid, seat, type: "pass", payload: { aiReason: aiV9BidReason(game, seat, profile, null, highest, auction, "Pass") } };
   }
 
   const byAmount = new Map();
@@ -1310,7 +1315,52 @@ function aiBidAction(game, seat) {
     .map((b) => ({ bid: b, score: aiBidSuitScore(profile, b) + (Math.random() - 0.5) * Math.max(0.02, (21 - difficulty) / 95) }))
     .sort((a, b) => b.score - a.score)[0].bid;
 
-  return { uid: player.uid, seat, type: "bid", payload: bid };
+  return { uid: player.uid, seat, type: "bid", payload: { ...bid, aiReason: aiV9BidReason(game, seat, profile, bid, highest, auction, "Bid") } };
+}
+
+
+function aiV9AuctionDiscipline(game, seat, profile, legalAll, highest, difficulty, personality) {
+  const minBid = legalAll[0] || null;
+  const highAmount = Number(highest?.amount || 0);
+  const minAmount = Number(minBid?.amount || 9);
+  const expectedGap = profile.expectedHeads - minAmount;
+  const suitFit = minBid ? (profile.expectedBySuit?.[minBid.suit] ?? profile.expectedHeads) - minAmount : 0;
+  const auctionRound = (game.bidding?.consecutivePasses || 0) + (game.bidding?.passesWithoutBid || 0);
+  const highAuction = highAmount >= 12 || minAmount >= 12;
+  const pressure = aiClamp((minAmount - 9) / 7 + Math.max(0, -expectedGap) * 0.28 + auctionRound * 0.035, 0, 1.6);
+  let maxComfortBid = Math.max(8, Math.min(16, Math.floor(profile.expectedHeads + profile.confidence * 0.9 + personality.bidBias * 0.55)));
+
+  // V9: 競價節奏控制。叫品越高，AI 越需要「期望頭數」與該花色契合度同時支持，避免只為了蓋過而硬叫。
+  if (difficulty >= 14 && highAuction && (expectedGap < -0.25 || suitFit < -0.55 || profile.confidence < 0.48)) {
+    return {
+      forcePass: Math.random() > Math.max(0.04, personality.bidBias * 0.08 + (profile.confidence - 0.45) * 0.2),
+      maxComfortBid,
+      pressure,
+      reason: `目前叫品已偏高，估計約 ${profile.expectedHeads.toFixed(1)} 頭，牌型不足以安全超叫，選擇 Pass。`
+    };
+  }
+  if (difficulty >= 16 && minAmount >= 13 && profile.expectedHeads < minAmount + 0.25 && profile.jokers < 1) {
+    return {
+      forcePass: true,
+      maxComfortBid,
+      pressure,
+      reason: `沒有鬼牌或足夠控制牌支撐 ${minAmount} 頭以上，避免冒進叫牌。`
+    };
+  }
+  if (difficulty <= 8) maxComfortBid += 1; // 低難度偶爾較冒險。
+  return { forcePass: false, maxComfortBid, pressure, reason: "" };
+}
+
+function aiV9BidReason(game, seat, profile, bid, highest, auction, action) {
+  const bestSuit = suitName(profile.bestSuit);
+  if (action === "Pass" || !bid) {
+    const highText = highest ? formatBid(highest) : "尚無叫品";
+    return `評估最佳花色為${bestSuit}、期望約 ${profile.expectedHeads.toFixed(1)} 頭；目前 ${highText}，安全邊際不足而 Pass。`;
+  }
+  const fit = profile.expectedBySuit?.[bid.suit] ?? profile.expectedHeads;
+  const jump = highest ? bid.amount - highest.amount : bid.amount - 9;
+  const jumpText = jump >= 2 ? "牌力足夠，允許小幅跳叫" : "採最低安全叫品";
+  return `估計 ${suitName(bid.suit)} 約 ${fit.toFixed(1)} 頭，整體期望 ${profile.expectedHeads.toFixed(1)} 頭；${jumpText}。`;
 }
 
 function aiEvaluateBidProfile(hand, settings, difficulty = 10) {
@@ -2328,6 +2378,7 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
   score += aiV7RiskTempoAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV7SecretarySignalAdjustment(game, seat, card, ctx, candidateWins, pointsWithCard) * skill;
   score += aiV8ProjectionAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
+  score += aiV9PlanningAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
 
   return score;
 }
@@ -2598,6 +2649,90 @@ function aiV8SeatCutPressure(game, observerSeat, targetSeat, ctx, suit) {
   return aiClamp(0.24 + voidConf * 0.44 + trumpLeft / Math.max(1, unseen.length) * 0.42, 0, 0.95);
 }
 
+
+function aiV9PlanningAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 13) return 0;
+  const weight = aiClamp((difficulty - 12) / 8, 0, 1.35);
+  const trickLen = game.trick?.length || 0;
+  const isPoint = isHeadCard(card);
+  const isTrump = Boolean(card.joker || (game.trump && game.trump !== "NT" && card.suit === game.trump));
+  const currentAllyWinning = trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam;
+  const currentEnemyWinning = trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam;
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const plan = aiV9ContractSwingPlan(game, seat, card, ctx, projection, candidateWins, pointsWithCard);
+  const secret = game.secretaryCardId ? findCardById(game.secretaryCardId) : null;
+  let score = 0;
+
+  // V9: 以「本墩後的成約差」評估，不只看這一墩有沒有贏。
+  if (plan.isCritical) {
+    if (plan.myTeamNeedsWin && (candidateWins || projection.holdProb >= 0.74)) score += 10 + pointsWithCard * 3.5;
+    if (plan.myTeamNeedsWin && !candidateWins && isPoint && !currentAllyWinning) score -= 14;
+    if (plan.preventOpponent && candidateWins) score += 9 + pointsWithCard * 4;
+    if (plan.preventOpponent && !candidateWins && isPoint && currentEnemyWinning) score -= 15;
+  }
+
+  // V9: 末三墩與高難度殘局，優先保留最後一張真正控制牌；但成敗線到了要敢用。
+  const stopper = aiV9IsLastStopper(game, seat, card, ctx);
+  if (stopper && !plan.isCritical && !ctx.late && pointsWithCard <= 1) score -= 12;
+  if (stopper && plan.isCritical && (candidateWins || projection.holdProb >= 0.72)) score += 8;
+
+  // V9: 暗秘書曝光時機更細。若秘書牌不需要現在亮，盡量藏；若能完成保約/擋約關鍵頭，立即亮。
+  if (!game.secretaryRevealed && card.id === game.secretaryCardId) {
+    const revealNow = plan.isCritical || pointsWithCard >= 2 || ctx.handSize <= 3 || ctx.contractMode.mode === "chase";
+    if (revealNow && (candidateWins || projection.holdProb >= 0.7)) score += 18;
+    if (!revealNow && (game.trickNo || 0) <= 5) score -= 22;
+  }
+
+  // V9: 拿破崙領秘書花色會暴露資訊；高難度只有在需要頭或想逼秘書現身時才這樣做。
+  if (seat === game.napoleon && trickLen === 0 && secret?.suit && card.suit === secret.suit && !game.secretaryRevealed) {
+    if (ctx.contractMode.mode === "chase" || ctx.napNeeds <= Math.max(2, pointsWithCard + 1)) score += 5;
+    else if (!isPoint) score -= 5;
+    else score -= 9;
+  }
+
+  // V9: 防家若推測某人像秘書，會避免讓該座位在後手輕鬆收頭。
+  if (ctx.myTeam === "def" && ctx.secretaryGuess && ctx.secretaryGuess.confidence >= 0.62) {
+    const guessedAfter = ctx.seatsAfter.includes(ctx.secretaryGuess.seat);
+    const guessedWinning = ctx.currentWinner === ctx.secretaryGuess.seat;
+    if (guessedAfter && isPoint && !candidateWins) score -= 9 * ctx.secretaryGuess.confidence;
+    if (guessedWinning && candidateWins) score += 9 * ctx.secretaryGuess.confidence;
+  }
+
+  // V9: 低風險脫手。沒有頭且不影響隊友時，更願意丟掉將來可能卡手的小牌。
+  if (!isPoint && !candidateWins && !currentEnemyWinning && projection.enemySwingProb < 0.32 && !isTrump) score += 2.8;
+
+  return score * weight;
+}
+
+function aiV9ContractSwingPlan(game, seat, card, ctx, projection, candidateWins, pointsWithCard) {
+  const myTeamIsNap = ctx.myTeam === "nap";
+  const potentialNapGain = (myTeamIsNap && (candidateWins || projection.holdProb >= 0.72)) ? pointsWithCard : 0;
+  const potentialEnemyGain = (!myTeamIsNap && !candidateWins && ctx.currentWinnerTeam === "nap") ? pointsWithCard : 0;
+  const napAfterMyWin = ctx.totals.teamHeads + potentialNapGain;
+  const napAfterEnemyWin = ctx.totals.teamHeads + potentialEnemyGain;
+  const contract = ctx.totals.contract || getBidAmount(game) || 9;
+  const napClose = contract - ctx.totals.teamHeads <= Math.max(2, pointsWithCard + 1);
+  return {
+    isCritical: napClose || ctx.remainingHeads <= 4 || ctx.handSize <= 3 || pointsWithCard >= 2,
+    myTeamNeedsWin: myTeamIsNap ? napAfterMyWin < contract && (ctx.contractMode.mode === "chase" || napClose) : ctx.contractMode.mode === "block" || napClose,
+    preventOpponent: !myTeamIsNap && (napAfterEnemyWin >= contract - 1 || napClose),
+    napAfterMyWin,
+    napAfterEnemyWin
+  };
+}
+
+function aiV9IsLastStopper(game, seat, card, ctx) {
+  const hand = game.players?.[seat]?.hand || [];
+  const control = aiControlCardValue(game, seat, card, ctx);
+  if (control < 14) return false;
+  const otherControls = hand.filter((c) => c.id !== card.id && aiControlCardValue(game, seat, c, ctx) >= 14);
+  if (otherControls.length) return false;
+  if (card.joker || card.id === game.secretaryCardId) return true;
+  if (game.trump && game.trump !== "NT" && card.suit === game.trump) return true;
+  return card.suit ? aiIsLikelyMaster(game, seat, card, card.suit, ctx.memory) : false;
+}
+
 function aiExplainPlayChoice(game, seat, card) {
   const difficulty = Number(game.settings?.difficulty || 10);
   if (difficulty < 16 || !card) return null;
@@ -2610,8 +2745,11 @@ function aiExplainPlayChoice(game, seat, card) {
   if (wins && projection.holdProb < 0.55) parts.push("雖可暫時領先，但後手有反吃風險");
   if (ctx.currentWinnerTeam === ctx.myTeam && point && projection.enemySwingProb < 0.32) parts.push("隊友吃墩較穩，適合餵頭");
   if (point && projection.enemyCutPressure > 0.45) parts.push("注意到後手對手可能缺門切牌，降低送頭風險");
+  const v9Plan = aiV9ContractSwingPlan(game, seat, card, ctx, projection, wins, (ctx.pointsOnTable || 0) + (point ? 1 : 0));
+  if (v9Plan.isCritical) parts.push("本墩接近成敗線，改用關鍵墩評分");
+  if (aiV9IsLastStopper(game, seat, card, ctx)) parts.push("這張屬於最後控制牌，只有在必要時使用");
   if (ctx.contractMode?.label) parts.push(`目前採用${ctx.contractMode.label}節奏`);
-  if (!parts.length) parts.push("以最低成本和後手風險評分後選出");
+  if (!parts.length) parts.push("以最低成本、後手投影與成約差評分後選出");
   return `選 ${cardLong(card)}：${parts.slice(0, 2).join("；")}。`;
 }
 
