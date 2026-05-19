@@ -1,4 +1,4 @@
-const CACHE_NAME = "napoleon-secretary-v10-ai-v9-strategy";
+const CACHE_NAME = "napoleon-secretary-v11-ai-v10-matrix";
 const ASSETS = [
   "./",
   "./index.html",

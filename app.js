@@ -133,7 +133,7 @@ function init() {
     $("difficultyLabel").textContent = $("difficulty").value;
     syncLobbySettingsSoon();
   });
-  for (const id of ["buriedMode", "leadMode", "trumpMode", "jokerLowLast3", "summonJokers", "allowSelfSecretary"]) {
+  for (const id of ["buriedMode", "leadMode", "trumpMode", "jokerLowLast3", "summonJokers", "allowSelfSecretary", "showAiThoughts"]) {
     $(id).addEventListener("change", syncLobbySettingsSoon);
   }
   renderConnectState();
@@ -526,7 +526,7 @@ function renderLobby() {
   applySettingsToUI(room.lobby?.settings || defaultSettings());
   const host = isHost();
   document.querySelectorAll(".host-only").forEach((el) => el.classList.toggle("hidden", !host));
-  for (const id of ["difficulty", "buriedMode", "leadMode", "trumpMode", "jokerLowLast3", "summonJokers", "allowSelfSecretary"]) {
+  for (const id of ["difficulty", "buriedMode", "leadMode", "trumpMode", "jokerLowLast3", "summonJokers", "allowSelfSecretary", "showAiThoughts"]) {
     $(id).disabled = !host;
   }
   const filled = ordered.filter(Boolean).length;
@@ -544,7 +544,8 @@ function defaultSettings() {
     trumpMode: "suitOnly",
     jokerLowLast3: true,
     summonJokers: true,
-    allowSelfSecretary: false
+    allowSelfSecretary: false,
+    showAiThoughts: true
   };
 }
 
@@ -556,7 +557,8 @@ function readSettingsFromUI() {
     trumpMode: $("trumpMode").value,
     jokerLowLast3: $("jokerLowLast3").checked,
     summonJokers: $("summonJokers").checked,
-    allowSelfSecretary: $("allowSelfSecretary").checked
+    allowSelfSecretary: $("allowSelfSecretary").checked,
+    showAiThoughts: $("showAiThoughts").checked
   };
 }
 
@@ -569,6 +571,7 @@ function applySettingsToUI(settings) {
   $("jokerLowLast3").checked = settings.jokerLowLast3 !== false;
   $("summonJokers").checked = settings.summonJokers !== false;
   $("allowSelfSecretary").checked = !!settings.allowSelfSecretary;
+  $("showAiThoughts").checked = settings.showAiThoughts !== false;
 }
 
 let settingsTimer = null;
@@ -747,6 +750,10 @@ function appendLog(game, message) {
   game.log = [message, ...(game.log || [])].slice(0, 90);
 }
 
+function shouldShowAiThoughts(game) {
+  return Number(game?.settings?.difficulty || 10) >= 16 && game?.settings?.showAiThoughts !== false;
+}
+
 function attachActionListener() {
   if (appState.actionsAttached) return;
   appState.actionsAttached = true;
@@ -894,7 +901,7 @@ function passBid(game, seat, payload = {}) {
   if (game.bidding.highest) game.bidding.consecutivePasses = (game.bidding.consecutivePasses || 0) + 1;
   else game.bidding.passesWithoutBid = (game.bidding.passesWithoutBid || 0) + 1;
   appendLog(game, `${p.name} Pass。`);
-  if (p.type === "bot" && payload?.aiReason && Number(game.settings?.difficulty || 10) >= 16) appendLog(game, `AI叫牌：${p.name} ${payload.aiReason}`);
+  if (p.type === "bot" && payload?.aiReason && shouldShowAiThoughts(game)) appendLog(game, `AI叫牌：${p.name} ${payload.aiReason}`);
 
   if (game.bidding.highest && game.bidding.consecutivePasses >= 4) return finishBidding(game);
   if (!game.bidding.highest && game.bidding.passesWithoutBid >= 5) {
@@ -917,7 +924,7 @@ function makeBid(game, seat, payload) {
   game.bidding.highest = { seat, amount: bid.amount, suit: bid.suit };
   game.bidding.consecutivePasses = 0;
   appendLog(game, `${p.name} 叫 ${formatBid(bid)}。`);
-  if (p.type === "bot" && payload?.aiReason && Number(game.settings?.difficulty || 10) >= 16) appendLog(game, `AI叫牌：${p.name} ${payload.aiReason}`);
+  if (p.type === "bot" && payload?.aiReason && shouldShowAiThoughts(game)) appendLog(game, `AI叫牌：${p.name} ${payload.aiReason}`);
   return advanceBidding(game);
 }
 
@@ -1021,7 +1028,7 @@ function playCard(game, seat, cardId, chosenLeadSuit = null, aiReason = null) {
     appendLog(game, `${player.name} 打出秘書牌，秘書公開！`);
   }
   appendLog(game, `${player.name} 出 ${cardLong(card)}。`);
-  if (player.type === "bot" && aiReason && Number(game.settings?.difficulty || 10) >= 16) {
+  if (player.type === "bot" && aiReason && shouldShowAiThoughts(game)) {
     appendLog(game, `AI思路：${player.name} ${aiReason}`);
   }
 
@@ -1329,6 +1336,16 @@ function aiV9AuctionDiscipline(game, seat, profile, legalAll, highest, difficult
   const highAuction = highAmount >= 12 || minAmount >= 12;
   const pressure = aiClamp((minAmount - 9) / 7 + Math.max(0, -expectedGap) * 0.28 + auctionRound * 0.035, 0, 1.6);
   let maxComfortBid = Math.max(8, Math.min(16, Math.floor(profile.expectedHeads + profile.confidence * 0.9 + personality.bidBias * 0.55)));
+
+  // V10: 若目前已有多人 Pass，代表叫品已接近桌面共識；高難度只有明顯超值才重新競價。
+  if (difficulty >= 15 && highest && (game.bidding?.consecutivePasses || 0) >= 2 && expectedGap < 0.65 && profile.confidence < 0.68) {
+    return {
+      forcePass: true,
+      maxComfortBid,
+      pressure,
+      reason: `已有 ${(game.bidding?.consecutivePasses || 0)} 家 Pass，估計 ${profile.expectedHeads.toFixed(1)} 頭沒有明顯超值，避免重新開戰。`
+    };
+  }
 
   // V9: 競價節奏控制。叫品越高，AI 越需要「期望頭數」與該花色契合度同時支持，避免只為了蓋過而硬叫。
   if (difficulty >= 14 && highAuction && (expectedGap < -0.25 || suitFit < -0.55 || profile.confidence < 0.48)) {
@@ -2379,6 +2396,7 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
   score += aiV7SecretarySignalAdjustment(game, seat, card, ctx, candidateWins, pointsWithCard) * skill;
   score += aiV8ProjectionAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV9PlanningAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
+  score += aiV10EndgameMatrixAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
 
   return score;
 }
@@ -2747,6 +2765,7 @@ function aiExplainPlayChoice(game, seat, card) {
   if (point && projection.enemyCutPressure > 0.45) parts.push("注意到後手對手可能缺門切牌，降低送頭風險");
   const v9Plan = aiV9ContractSwingPlan(game, seat, card, ctx, projection, wins, (ctx.pointsOnTable || 0) + (point ? 1 : 0));
   if (v9Plan.isCritical) parts.push("本墩接近成敗線，改用關鍵墩評分");
+  if (ctx.handSize <= 3) parts.push("進入殘局，改用剩餘頭數預算評分");
   if (aiV9IsLastStopper(game, seat, card, ctx)) parts.push("這張屬於最後控制牌，只有在必要時使用");
   if (ctx.contractMode?.label) parts.push(`目前採用${ctx.contractMode.label}節奏`);
   if (!parts.length) parts.push("以最低成本、後手投影與成約差評分後選出");
@@ -2766,6 +2785,73 @@ function aiControlCardValue(game, seat, card, ctx) {
   if (card.suit && aiIsLikelyMaster(game, seat, card, card.suit, ctx.memory)) value += isHeadCard(card) ? 9 : 5;
   if (game.settings?.jokerLowLast3 && card.joker && game.trickNo >= 6) value *= card.id === "RJ" ? 0.55 : 0.75;
   return value;
+}
+
+
+function aiV10EndgameMatrixAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 14) return 0;
+  const weight = aiClamp((difficulty - 13) / 7, 0, 1.45);
+  const trickLen = game.trick?.length || 0;
+  const hand = game.players?.[seat]?.hand || [];
+  const remainingTricks = Math.max(1, 10 - (game.trickNo || 0));
+  const isPoint = isHeadCard(card);
+  const isTrump = Boolean(card.joker || (game.trump && game.trump !== "NT" && card.suit === game.trump));
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const control = aiControlCardValue(game, seat, card, ctx);
+  const master = card.suit ? aiIsLikelyMaster(game, seat, card, card.suit, ctx.memory) : Boolean(card.joker || card.id === game.secretaryCardId);
+  const criticalLine = ctx.myTeam === "nap"
+    ? ctx.napNeeds <= Math.max(2, pointsWithCard + 1)
+    : ctx.napNeeds <= Math.max(3, pointsWithCard + 1);
+  let score = 0;
+
+  // V10: 殘局頭數預算。剩下頭牌不多時，安全可收的頭要更積極；不安全的頭要避免送給對方。
+  const handHeads = countPoints(hand);
+  if (remainingTricks <= 3 || ctx.handSize <= 3) {
+    if (isPoint && (master || projection.holdProb >= 0.78) && (candidateWins || trickLen === 0)) score += 11 + pointsWithCard * 3;
+    if (isPoint && !candidateWins && projection.enemyHoldProb >= 0.52) score -= 12 + projection.enemyHoldProb * 8;
+    if (!isPoint && !candidateWins && handHeads >= remainingTricks) score += 4.5; // 先脫低牌，保留後續頭牌搭配。
+  }
+
+  // V10: 最低成本升級。若小贏牌已足夠，避免把唯一控制牌或鬼牌浪費在低頭墩。
+  const legalWinning = trickLen > 0
+    ? legal.filter((c) => wouldWin(game, c)).sort((a, b) => cardPlayValue(a, game) - cardPlayValue(b, game))
+    : legal.filter((c) => aiLikelyLeadWin(game, seat, c) >= 0.7).sort((a, b) => cardPlayValue(a, game) - cardPlayValue(b, game));
+  const cheapestWinner = legalWinning[0] || null;
+  if (candidateWins && cheapestWinner && cheapestWinner.id !== card.id && pointsWithCard <= 1 && !criticalLine) {
+    const overpay = cardPlayValue(card, game) - cardPlayValue(cheapestWinner, game);
+    if (control >= 12 || isTrump) score -= aiClamp(overpay / 3, 0, 12);
+  }
+
+  // V10: 防家擋約與拿破崙保約的臨界處理。
+  if (ctx.myTeam === "nap") {
+    if (criticalLine && candidateWins && projection.holdProb >= 0.62) score += 12 + pointsWithCard * 4;
+    if (ctx.contractMode.mode === "protect" && control >= 14 && !criticalLine && !ctx.late) score -= 8;
+    if (ctx.contractMode.mode === "chase" && isPoint && projection.holdProb >= 0.66) score += 6;
+  } else {
+    if (criticalLine && candidateWins && projection.holdProb >= 0.55) score += 13 + pointsWithCard * 4;
+    if (criticalLine && !candidateWins && isPoint && projection.enemyHoldProb >= 0.5) score -= 14;
+    if (ctx.contractMode.mode === "conserve" && control >= 14 && !criticalLine && !ctx.late) score -= 6;
+  }
+
+  // V10: 領牌矩陣。高難度會避開敵方已缺門的高頭牌，並利用隊友缺門做切牌配合。
+  if (trickLen === 0 && card.suit && !card.joker) {
+    const plan = ctx.suitPlan?.[card.suit];
+    if (plan) {
+      if (isPoint && plan.voidOpponents > 0 && !master) score -= 9 * plan.voidOpponents;
+      if (!isPoint && plan.voidAllies > 0 && ctx.myTeam === "nap") score += 5 * plan.voidAllies;
+      if (plan.masters > 0 && isPoint && (ctx.late || criticalLine)) score += 7;
+      if (plan.count >= 4 && !isPoint && !isTrump && (game.trickNo || 0) <= 3) score += 3.5;
+    }
+  }
+
+  // V10: 秘書牌不再機械保留；當它能直接跨過成敗線，應果斷公開。
+  if (!game.secretaryRevealed && card.id === game.secretaryCardId) {
+    if (criticalLine && (candidateWins || projection.holdProb >= 0.68)) score += 18;
+    else if (!ctx.late && pointsWithCard <= 1) score -= 18;
+  }
+
+  return score * weight;
 }
 
 function aiPickScoredCard(scored, difficulty) {
