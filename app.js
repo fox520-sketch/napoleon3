@@ -2397,6 +2397,7 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
   score += aiV8ProjectionAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV9PlanningAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV10EndgameMatrixAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
+  score += aiV11SignalPressureAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
 
   return score;
 }
@@ -2768,7 +2769,11 @@ function aiExplainPlayChoice(game, seat, card) {
   if (ctx.handSize <= 3) parts.push("進入殘局，改用剩餘頭數預算評分");
   if (aiV9IsLastStopper(game, seat, card, ctx)) parts.push("這張屬於最後控制牌，只有在必要時使用");
   if (ctx.contractMode?.label) parts.push(`目前採用${ctx.contractMode.label}節奏`);
-  if (!parts.length) parts.push("以最低成本、後手投影與成約差評分後選出");
+  const v11Pressure = aiV11TrumpJokerPressure(game, seat, ctx);
+  const v11Signal = aiV11PartnershipSignal(game, seat);
+  if (v11Pressure.enemyCutPressure > 0.48) parts.push("王牌/鬼牌壓力偏高，避免不安全送頭");
+  if (!game.secretaryRevealed && v11Signal?.exposureRisk > 0.5) parts.push("依餵頭訊號重新估計暗秘書風險");
+  if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號與成約差評分後選出");
   return `選 ${cardLong(card)}：${parts.slice(0, 2).join("；")}。`;
 }
 
@@ -2854,17 +2859,148 @@ function aiV10EndgameMatrixAdjustment(game, seat, card, ctx, legal, candidateWin
   return score * weight;
 }
 
+
+function aiV11SignalPressureAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 11) return 0;
+  const weight = aiClamp((difficulty - 10) / 10, 0, 1.6);
+  const trickLen = game.trick?.length || 0;
+  const isPoint = isHeadCard(card);
+  const isTrumpOrJoker = Boolean(card.joker || (game.trump && game.trump !== "NT" && card.suit === game.trump));
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const pressure = aiV11TrumpJokerPressure(game, seat, ctx);
+  const signal = aiV11PartnershipSignal(game, seat);
+  const futureOpponents = ctx.seatsAfter.filter((s) => aiTeamView(game, s, seat) !== ctx.myTeam);
+  const futureAllies = ctx.seatsAfter.filter((s) => aiTeamView(game, s, seat) === ctx.myTeam);
+  let score = 0;
+
+  // V11：剩餘王牌/鬼牌壓力。高壓時，非安全頭牌容易被後手切走；低壓時，master 頭牌要敢收。
+  if (!isTrumpOrJoker && isPoint && !ctx.actingLast) {
+    if (pressure.enemyCutPressure >= 0.42 && !candidateWins) score -= 10 * pressure.enemyCutPressure;
+    if (candidateWins && projection.holdProb < 0.62 && pressure.unseenControlCount >= 2) score -= 6 * pressure.enemyCutPressure;
+  }
+  if (isPoint && candidateWins && projection.holdProb >= 0.78 && pressure.enemyCutPressure <= 0.22) {
+    score += 5 + pointsWithCard * 2.2;
+  }
+
+  // V11：隊友訊號推理。暗秘書未公開時，用歷史餵頭/攔截行為估計誰偏拿破崙軍，避免防家把頭餵給疑似幫拿破崙的人。
+  if (!game.secretaryRevealed && signal) {
+    if (ctx.myTeam === "def") {
+      if (ctx.currentWinner !== null && signal.napLean[ctx.currentWinner] > 0.42 && !candidateWins && isPoint) {
+        score -= 10 * signal.napLean[ctx.currentWinner];
+      }
+      for (const s of futureOpponents) {
+        if (signal.napLean[s] > 0.42 && isPoint && !candidateWins) score -= 4.5 * signal.napLean[s];
+      }
+      if (candidateWins && ctx.currentWinner !== null && signal.napLean[ctx.currentWinner] > 0.48) {
+        score += 6 * signal.napLean[ctx.currentWinner];
+      }
+    } else {
+      // 拿破崙軍：若後手疑似盟友且可能缺門，可用低牌引導；但非關鍵墩少逼暗秘書曝光。
+      const likelyHelperAfter = futureAllies.find((s) => signal.napLean[s] > 0.45);
+      if (likelyHelperAfter !== undefined && !isPoint && !candidateWins && card.suit && aiLikelyVoid(ctx, likelyHelperAfter, card.suit)) {
+        score += 5 * signal.napLean[likelyHelperAfter];
+      }
+      if (card.id === game.secretaryCardId && signal.exposureRisk > 0.55 && pointsWithCard <= 1 && !ctx.late) {
+        score -= 8 * signal.exposureRisk;
+      }
+    }
+  }
+
+  // V11：自然難度分層。中低難度不完全使用風險矩陣，高難度才明顯保留控制牌與計算成敗線。
+  const critical = ctx.myTeam === "nap"
+    ? ctx.napNeeds <= Math.max(2, pointsWithCard + 1)
+    : ctx.napNeeds <= Math.max(3, pointsWithCard + 2);
+  const control = aiControlCardValue(game, seat, card, ctx);
+  if (difficulty >= 17 && control >= 14 && !critical && !ctx.late && pointsWithCard <= 1) {
+    score -= 6 + control * 0.22;
+  }
+  if (difficulty >= 17 && critical && candidateWins && projection.holdProb >= 0.58) {
+    score += 8 + pointsWithCard * 3;
+  }
+
+  // V11：領牌時若已知道敵方多人缺門，避免領出高頭牌；若隊友缺門，低牌開門更有價值。
+  if (trickLen === 0 && card.suit && !isTrumpOrJoker) {
+    const enemyVoids = futureOpponents.filter((s) => aiLikelyVoid(ctx, s, card.suit)).length;
+    const allyVoids = futureAllies.filter((s) => aiLikelyVoid(ctx, s, card.suit)).length;
+    if (enemyVoids > 0 && isPoint && !aiIsLikelyMaster(game, seat, card, card.suit, ctx.memory)) score -= 8 * enemyVoids;
+    if (allyVoids > 0 && !isPoint && ctx.myTeam === "nap") score += 4 * allyVoids;
+  }
+
+  return score * weight;
+}
+
+function aiV11TrumpJokerPressure(game, seat, ctx) {
+  const memory = ctx?.memory || aiBuildCardMemory(game, seat);
+  const remaining = memory.remaining || [];
+  const trump = game.trump;
+  const controlCards = remaining.filter((c) => c.joker || (trump && trump !== "NT" && c.suit === trump));
+  const unseenControlCount = controlCards.length;
+  const futureOpponents = ctx?.seatsAfter?.filter((s) => aiTeamView(game, s, seat) !== ctx.myTeam) || [];
+  const futureEnemyVoids = ctx?.leadSuit ? futureOpponents.filter((s) => aiLikelyVoid(ctx, s, ctx.leadSuit)).length : 0;
+  const jokerThreat = (memory.bigJokerSeen ? 0 : 1) + (memory.smallJokerSeen ? 0 : 0.72);
+  const trumpThreat = trump && trump !== "NT" ? aiClamp(unseenControlCount / 9, 0, 1) : 0;
+  return {
+    unseenControlCount,
+    jokerThreat,
+    trumpThreat,
+    enemyCutPressure: aiClamp(futureEnemyVoids * 0.34 + trumpThreat * 0.36 + jokerThreat * 0.14, 0, 1)
+  };
+}
+
+function aiV11PartnershipSignal(game, observerSeat) {
+  if (!game?.trickHistory?.length || game.secretaryRevealed) {
+    return { napLean: [0, 0, 0, 0, 0], exposureRisk: 0 };
+  }
+  const napLean = [0, 0, 0, 0, 0];
+  const histories = Array.isArray(game.trickHistory) ? game.trickHistory : [];
+  for (const trick of histories) {
+    const plays = trick.plays || [];
+    const leadSuit = trick.leadSuit || aiLeadSuitFromPlays(plays);
+    let best = plays[0] || null;
+    for (let i = 1; i < plays.length; i += 1) {
+      const play = plays[i];
+      const seat = play.seat;
+      if (seat === game.napoleon) {
+        best = cardStrength(play.card, game, leadSuit) > cardStrength(best?.card, game, leadSuit) ? play : best;
+        continue;
+      }
+      const beforeWinner = best?.seat;
+      const beforeNap = beforeWinner === game.napoleon;
+      const winsNow = cardStrength(play.card, game, leadSuit) > cardStrength(best?.card, game, leadSuit);
+      const isPoint = isHeadCard(play.card);
+      if (beforeNap && !winsNow && isPoint) napLean[seat] += 0.22;
+      if (beforeNap && winsNow) napLean[seat] -= 0.20;
+      if (!beforeNap && trick.winner === game.napoleon && !winsNow && isPoint) napLean[seat] += 0.12;
+      if (trick.winner === seat && trick.heads >= 2 && seat !== game.napoleon) napLean[seat] -= 0.08;
+      if (winsNow) best = play;
+    }
+  }
+  for (let i = 0; i < napLean.length; i += 1) {
+    if (i === game.napoleon) napLean[i] = 1;
+    else napLean[i] = aiClamp(napLean[i], -0.6, 0.8);
+  }
+  const maxHidden = Math.max(0, ...napLean.filter((_, i) => i !== game.napoleon && i !== observerSeat));
+  return { napLean, exposureRisk: maxHidden };
+}
+
+
 function aiPickScoredCard(scored, difficulty) {
-  const spread = Math.max(0.34, (21 - difficulty) * 1.32);
+  const tier = difficulty >= 18 ? "expert" : difficulty >= 14 ? "hard" : difficulty >= 9 ? "normal" : "easy";
+  const spreadMap = { easy: 18, normal: 8.5, hard: 3.4, expert: 0.95 };
+  const spread = spreadMap[tier] ?? Math.max(0.34, (21 - difficulty) * 1.32);
   const withNoise = scored.map((item) => ({
     card: item.card,
     score: item.score + (Math.random() - 0.5) * spread
   })).sort((a, b) => b.score - a.score);
 
-  if (difficulty <= 8 && withNoise.length > 1 && Math.random() < 0.16) {
-    return randomItem(withNoise.slice(0, Math.min(3, withNoise.length))).card;
+  if (tier === "easy" && withNoise.length > 1 && Math.random() < 0.22) {
+    return randomItem(withNoise.slice(0, Math.min(4, withNoise.length))).card;
   }
-  if (difficulty <= 13 && withNoise.length > 1 && Math.random() < 0.055) {
+  if (tier === "normal" && withNoise.length > 1 && Math.random() < 0.075) {
+    return withNoise[1].card;
+  }
+  if (tier === "hard" && withNoise.length > 2 && Math.random() < 0.018) {
     return withNoise[1].card;
   }
   return withNoise[0].card;
