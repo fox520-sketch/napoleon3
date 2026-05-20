@@ -2398,6 +2398,7 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
   score += aiV9PlanningAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV10EndgameMatrixAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV11SignalPressureAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
+  score += aiV12BlunderGuardAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
 
   return score;
 }
@@ -2752,6 +2753,93 @@ function aiV9IsLastStopper(game, seat, card, ctx) {
   return card.suit ? aiIsLikelyMaster(game, seat, card, card.suit, ctx.memory) : false;
 }
 
+
+function aiV12BlunderGuardAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) {
+  const difficulty = Number(game.settings?.difficulty || ctx.difficulty || 10);
+  if (difficulty < 12) return 0;
+  const weight = aiClamp((difficulty - 11) / 9, 0, 1.5);
+  const trickLen = game.trick?.length || 0;
+  const isPoint = isHeadCard(card);
+  const isControl = aiControlCardValue(game, seat, card, ctx) >= 14;
+  const isTrump = Boolean(card.joker || (game.trump && game.trump !== "NT" && card.suit === game.trump));
+  const currentAllyWinning = trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam;
+  const currentEnemyWinning = trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam;
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const plan = aiV9ContractSwingPlan(game, seat, card, ctx, projection, candidateWins, pointsWithCard);
+  const nonPointAlternative = legal.some((c) => c.id !== card.id && !isHeadCard(c));
+  const cheapWinning = trickLen > 0
+    ? legal.filter((c) => wouldWin(game, c)).sort((a, b) => cardPlayValue(a, game) - cardPlayValue(b, game))[0]
+    : legal.filter((c) => aiLikelyLeadWin(game, seat, c) >= 0.72).sort((a, b) => cardPlayValue(a, game) - cardPlayValue(b, game))[0];
+  let score = 0;
+
+  // V12: 明顯不要蓋隊友。隊友已吃且沒有被後手超車的壓力時，任何「蓋隊友」都視為失誤候選。
+  if (currentAllyWinning && candidateWins && !plan.isCritical) {
+    const winnerPlay = (game.trick || []).find((p2) => p2.seat === ctx.currentWinner);
+    const allyRisk = winnerPlay ? aiFutureOvertakeRisk(game, seat, winnerPlay.card, ctx) : 0;
+    if (allyRisk < 0.50) score -= (18 + cardPlayValue(card, game) * 0.22 + (isControl ? 10 : 0)) * weight;
+    if (allyRisk >= 0.50 && pointsWithCard >= 2) score += 5 * weight; // 只有多頭墩、且隊友可能守不住時才補位。
+  }
+
+  // V12: 明顯不要把頭送給正在吃墩的對手；有低牌可丟時，高難度會強烈避免送頭。
+  if (currentEnemyWinning && !candidateWins && isPoint && nonPointAlternative) {
+    let penalty = 22 + pointsWithCard * 6;
+    if (ctx.contractMode.mode === "block" || ctx.contractMode.mode === "protect") penalty += 8;
+    if (ctx.actingLast) penalty += 4;
+    score -= penalty * weight;
+  }
+
+  // V12: 可低成本吃牌時，不用鬼牌、秘書牌或最後控制牌去「大贏小墩」。
+  if (candidateWins && cheapWinning && cheapWinning.id !== card.id) {
+    const overpay = cardPlayValue(card, game) - cardPlayValue(cheapWinning, game);
+    const cheapProjection = aiV8ProjectedTrickOutcome(game, seat, cheapWinning, ctx);
+    const sameSafety = cheapProjection.holdProb + 0.08 >= projection.holdProb;
+    if (sameSafety && pointsWithCard <= 1 && !plan.isCritical) {
+      score -= aiClamp(overpay * 0.55 + (isControl ? 12 : 0), 4, 24) * weight;
+    }
+  }
+
+  // V12: 領牌前自我檢查。敵方疑似缺該門時，除非是 master 或關鍵墩，不領不安全頭牌。
+  if (trickLen === 0 && card.suit && isPoint && !plan.isCritical) {
+    const futureOpponents = ctx.seatsAfter.filter((s2) => aiTeamView(game, s2, seat) !== ctx.myTeam);
+    const oppVoid = aiCountLikelyVoids(ctx, futureOpponents, card.suit);
+    const master = aiIsLikelyMaster(game, seat, card, card.suit, ctx.memory);
+    if (oppVoid > 0 && !master) score -= (12 + oppVoid * 7) * weight;
+  }
+
+  // V12: 最後控制牌只有在能改善成約差或殘局需要時才出。
+  if (isControl && !plan.isCritical && !ctx.late && pointsWithCard === 0) {
+    score -= (9 + (isTrump ? 4 : 0)) * weight;
+  }
+
+  // V12: 若隊友已穩吃且自己是最後一手，頭牌可以安全餵；否則寧可保留。
+  if (currentAllyWinning && !candidateWins && isPoint) {
+    const futureOpponents = ctx.seatsAfter.filter((s2) => aiTeamView(game, s2, seat) !== ctx.myTeam);
+    if (!futureOpponents.length) score += (10 + pointsWithCard * 2) * weight;
+    else score -= (futureOpponents.length * 5) * weight;
+  }
+
+  // V12: 非頭小牌可做安全脫手時稍微加分，讓 AI 少卡住小牌。
+  if (!isPoint && !candidateWins && !isControl && projection.enemySwingProb < 0.34) score += 3.5 * weight;
+
+  return score;
+}
+
+function aiV12BlunderNotes(game, seat, card, ctx) {
+  const notes = [];
+  if (!card) return notes;
+  const trickLen = game.trick?.length || 0;
+  const wins = trickLen ? wouldWin(game, card) : aiLikelyLeadWin(game, seat, card) >= 0.72;
+  const isPoint = isHeadCard(card);
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const plan = aiV9ContractSwingPlan(game, seat, card, ctx, projection, wins, (ctx.pointsOnTable || 0) + (isPoint ? 1 : 0));
+  if (trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam && wins && !plan.isCritical) notes.push("自我檢查：避免無必要蓋隊友");
+  if (trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam && !wins && isPoint) notes.push("自我檢查：避免把頭送給對手");
+  if (aiControlCardValue(game, seat, card, ctx) >= 14 && !plan.isCritical && !ctx.late) notes.push("控制牌仍可保留，只有必要才用");
+  if (projection.enemyCutPressure > 0.48) notes.push("覆核後手切牌壓力");
+  if (!notes.length) notes.push("已通過蓋隊友、送頭、浪費控制牌的覆核");
+  return notes;
+}
+
 function aiExplainPlayChoice(game, seat, card) {
   const difficulty = Number(game.settings?.difficulty || 10);
   if (difficulty < 16 || !card) return null;
@@ -2773,6 +2861,8 @@ function aiExplainPlayChoice(game, seat, card) {
   const v11Signal = aiV11PartnershipSignal(game, seat);
   if (v11Pressure.enemyCutPressure > 0.48) parts.push("王牌/鬼牌壓力偏高，避免不安全送頭");
   if (!game.secretaryRevealed && v11Signal?.exposureRisk > 0.5) parts.push("依餵頭訊號重新估計暗秘書風險");
+  const v12Notes = aiV12BlunderNotes(game, seat, card, ctx);
+  parts.push(...v12Notes);
   if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號與成約差評分後選出");
   return `選 ${cardLong(card)}：${parts.slice(0, 2).join("；")}。`;
 }
