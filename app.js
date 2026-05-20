@@ -2422,6 +2422,7 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
   score += aiV13AdaptiveLearningAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV14StyleStrategyAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV15StrategicContinuityAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
+  score += aiV16OpponentModelAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
 
   return score;
 }
@@ -3178,6 +3179,172 @@ function aiV15OpeningPlanReason(game, seat, secretaryCardId) {
   return plan.slice(0, 3).join("；") + "。";
 }
 
+
+function aiV16OpponentModelAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 12) return 0;
+  const weight = aiClamp((difficulty - 11) / 9, 0, 1.55);
+  const trickLen = game.trick?.length || 0;
+  const isPoint = isHeadCard(card);
+  const isTrumpOrJoker = Boolean(card.joker || (game.trump && game.trump !== "NT" && card.suit === game.trump));
+  const leadSuit = ctx.leadSuit || (card.joker ? null : card.suit);
+  const models = aiV16OpponentModels(game, seat, ctx);
+  const futureOpponents = ctx.seatsAfter.filter((s) => aiTeamView(game, s, seat) !== ctx.myTeam);
+  const futureAllies = ctx.seatsAfter.filter((s) => aiTeamView(game, s, seat) === ctx.myTeam);
+  const currentModel = ctx.currentWinner !== null && ctx.currentWinner !== undefined ? models[ctx.currentWinner] : null;
+  let score = 0;
+
+  // 對手模型：若後手有常切牌/常搶墩的對手，非 master 頭牌更容易變成送頭。
+  if (leadSuit && !isTrumpOrJoker && isPoint && !ctx.actingLast) {
+    for (const opp of futureOpponents) {
+      const model = models[opp];
+      if (!model) continue;
+      const voidRisk = ctx.memory?.voids?.[opp]?.[leadSuit] ? 0.55 + (ctx.memory?.voidConfidence?.[opp]?.[leadSuit] || 0) * 0.35 : 0;
+      const cutterRisk = model.cutter * 0.32 + model.aggression * 0.18 + voidRisk;
+      if (cutterRisk > 0.45 && !aiIsLikelyMaster(game, seat, card, leadSuit, ctx.memory)) score -= (8 + cutterRisk * 10) * weight;
+    }
+  }
+
+  // 如果目前吃墩者是「收頭型」敵方，且本墩已有頭，防家/拿破崙軍都更願意用低成本吃回來。
+  if (trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam && currentModel) {
+    const dangerCollector = currentModel.collector * 0.55 + currentModel.aggression * 0.25 + currentModel.napFeed * 0.2;
+    if (candidateWins && (pointsWithCard > 0 || dangerCollector > 0.52)) score += (6 + pointsWithCard * 4 + dangerCollector * 6) * weight;
+    if (!candidateWins && isPoint) score -= (8 + dangerCollector * 9) * weight;
+  }
+
+  // 盟友模型：穩定支援型盟友吃墩時可餵頭；若該盟友常被反吃，先不要急著餵頭。
+  if (trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam && currentModel) {
+    const allyReliability = currentModel.support + currentModel.holdsLead * 0.45 - currentModel.riskyLead * 0.45;
+    if (!candidateWins && isPoint) {
+      if (ctx.actingLast || allyReliability >= 0.52) score += (6 + allyReliability * 8) * weight;
+      else score -= (5 + Math.max(0, 0.46 - allyReliability) * 12) * weight;
+    }
+    if (candidateWins && allyReliability >= 0.5 && pointsWithCard <= 1 && !ctx.late) score -= 7 * weight;
+  }
+
+  // 領牌時依全桌模型調整：敵方偏被動可兌現 master；敵方偏侵略或切牌型則用低牌探門。
+  if (trickLen === 0) {
+    const enemyAggression = aiV16AverageModel(models, futureOpponents.length ? futureOpponents : [0,1,2,3,4].filter((s) => s !== seat && aiTeamView(game, s, seat) !== ctx.myTeam), "aggression");
+    const enemyCut = leadSuit ? aiV16AverageModel(models, [0,1,2,3,4].filter((s) => s !== seat && aiTeamView(game, s, seat) !== ctx.myTeam), "cutter") : 0;
+    const master = leadSuit ? aiIsLikelyMaster(game, seat, card, leadSuit, ctx.memory) : Boolean(card.joker || card.id === game.secretaryCardId);
+    if (isPoint && master && enemyAggression < 0.45) score += (4 + pointsWithCard * 2) * weight;
+    if (isPoint && !master && enemyAggression > 0.55) score -= (7 + enemyAggression * 7) * weight;
+    if (!isPoint && !isTrumpOrJoker && enemyCut > 0.45 && ctx.myTeam === "nap") score += 3.5 * weight;
+  }
+
+  // 暗秘書尚未公開時，若某玩家模型顯示明顯餵拿破崙，防家更保守；拿破崙軍則可試著保護這個訊號。
+  if (!game.secretaryRevealed && ctx.myTeam === "def" && isPoint) {
+    const secretLikeAfter = futureOpponents
+      .map((s) => models[s])
+      .filter(Boolean)
+      .reduce((max, m) => Math.max(max, m.napFeed), 0);
+    if (secretLikeAfter > 0.55 && !candidateWins) score -= (6 + secretLikeAfter * 9) * weight;
+  }
+
+  return score;
+}
+
+function aiV16OpponentModels(game, observerSeat, ctx = null) {
+  const models = Array.from({ length: 5 }, (_, seat) => aiV16SeatOpponentModel(game, observerSeat, seat, ctx));
+  return models;
+}
+
+function aiV16SeatOpponentModel(game, observerSeat, targetSeat, ctx = null) {
+  const histories = Array.isArray(game.trickHistory) ? game.trickHistory : [];
+  let pointFeedsNap = 0;
+  let blocksNap = 0;
+  let riskyLeads = 0;
+  let leadWins = 0;
+  let leads = 0;
+  let collects = 0;
+  let supportFeeds = 0;
+  let cutSignals = 0;
+  let samples = 0;
+
+  for (const trick of histories) {
+    const plays = trick.plays || [];
+    if (!plays.length) continue;
+    const playIndex = plays.findIndex((p) => p.seat === targetSeat);
+    if (playIndex < 0) continue;
+    const play = plays[playIndex];
+    const card = play.card;
+    if (!card) continue;
+    samples += 1;
+    const isPoint = isHeadCard(card);
+    const leadSuit = trick.leadSuit || aiLeadSuitFromPlays(plays);
+    if (playIndex === 0) {
+      leads += 1;
+      if (trick.winner === targetSeat) leadWins += 1;
+      if (isPoint && trick.winner !== targetSeat) riskyLeads += 1;
+    }
+    if (trick.winner === game.napoleon && isPoint && targetSeat !== game.napoleon) pointFeedsNap += 1;
+    if (trick.winner === targetSeat && (trick.heads || 0) >= 2) collects += 1;
+
+    const before = plays.slice(0, playIndex);
+    if (before.length) {
+      let bestBefore = before[0];
+      for (const prev of before.slice(1)) {
+        if (cardStrength(prev.card, game, leadSuit) > cardStrength(bestBefore.card, game, leadSuit)) bestBefore = prev;
+      }
+      const beforeTeam = aiTeamView(game, bestBefore.seat, observerSeat);
+      const targetTeam = aiTeamView(game, targetSeat, observerSeat);
+      const winsNow = cardStrength(card, game, leadSuit) > cardStrength(bestBefore.card, game, leadSuit);
+      if (bestBefore.seat === game.napoleon && winsNow) blocksNap += 1;
+      if (beforeTeam === targetTeam && !winsNow && isPoint) supportFeeds += 1;
+    }
+
+    if (leadSuit && card.suit && card.suit !== leadSuit && !card.joker) cutSignals += 1;
+  }
+
+  const mem = ctx?.memory || aiBuildCardMemory(game, observerSeat);
+  const voidCount = ["S", "H", "D", "C"].filter((suit) => mem.voids?.[targetSeat]?.[suit]).length;
+  const aggression = aiClamp((collects * 0.25 + blocksNap * 0.22 + leadWins * 0.14 - riskyLeads * 0.18) / Math.max(1, samples * 0.32), 0, 1);
+  const support = aiClamp((supportFeeds * 0.3 + pointFeedsNap * (targetSeat !== game.napoleon ? 0.12 : 0)) / Math.max(1, samples * 0.22), 0, 1);
+  const blocker = aiClamp((blocksNap * 0.38 + collects * 0.12) / Math.max(1, samples * 0.25), 0, 1);
+  const napFeed = aiClamp((pointFeedsNap * 0.42 + supportFeeds * 0.12 - blocksNap * 0.2) / Math.max(1, samples * 0.24), 0, 1);
+  const cutter = aiClamp(voidCount * 0.23 + cutSignals * 0.2, 0, 1);
+  const riskyLead = aiClamp(riskyLeads / Math.max(1, leads), 0, 1);
+  const holdsLead = aiClamp(leadWins / Math.max(1, leads), 0, 1);
+  let label = "觀察中";
+  if (samples >= 3) {
+    if (napFeed >= 0.58 && !game.secretaryRevealed) label = "疑似支援拿破崙";
+    else if (blocker >= 0.55) label = "擋約積極";
+    else if (cutter >= 0.55) label = "切牌威脅";
+    else if (aggression >= 0.56) label = "搶墩積極";
+    else if (support >= 0.5) label = "餵隊友型";
+    else if (riskyLead >= 0.45) label = "領頭牌偏冒險";
+  }
+  return { seat: targetSeat, samples, aggression, support, blocker, napFeed, cutter, collector: aiClamp(collects / Math.max(1, samples), 0, 1), riskyLead, holdsLead, label };
+}
+
+function aiV16AverageModel(models, seats, key) {
+  const usable = (seats || []).map((s) => models?.[s]?.[key]).filter((n) => Number.isFinite(n));
+  if (!usable.length) return 0;
+  return usable.reduce((sum, n) => sum + n, 0) / usable.length;
+}
+
+function aiV16OpponentModelNotes(game, seat, card, ctx) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 16 || !card) return [];
+  const notes = [];
+  const models = aiV16OpponentModels(game, seat, ctx);
+  const leadSuit = ctx?.leadSuit || (card.joker ? null : card.suit);
+  const futureOpponents = (ctx?.seatsAfter || []).filter((s) => aiTeamView(game, s, seat) !== ctx.myTeam);
+  const futureAllies = (ctx?.seatsAfter || []).filter((s) => aiTeamView(game, s, seat) === ctx.myTeam);
+  const dangerousEnemy = futureOpponents.map((s) => models[s]).filter(Boolean).sort((a, b) => Math.max(b.cutter, b.aggression, b.napFeed) - Math.max(a.cutter, a.aggression, a.napFeed))[0];
+  if (dangerousEnemy && Math.max(dangerousEnemy.cutter, dangerousEnemy.aggression) >= 0.55) notes.push(`對手模型：後手 ${game.players[dangerousEnemy.seat]?.name || "對手"} 偏${dangerousEnemy.label}，降低送頭風險`);
+  if (ctx?.currentWinner !== null && ctx?.currentWinner !== undefined) {
+    const m = models[ctx.currentWinner];
+    if (m && ctx.currentWinnerTeam === ctx.myTeam && isHeadCard(card) && m.support + m.holdsLead >= 0.8) notes.push(`對手模型：目前吃墩的隊友屬${m.label}，可考慮安全餵頭`);
+    if (m && ctx.currentWinnerTeam !== ctx.myTeam && (m.collector || m.aggression) && Math.max(m.aggression, m.blocker) >= 0.55) notes.push(`對手模型：目前吃墩者偏${m.label}，需要用低成本攔截`);
+  }
+  if (leadSuit) {
+    const allyCutter = futureAllies.map((s) => models[s]).filter((m) => m?.cutter >= 0.5)[0];
+    if (allyCutter && !isHeadCard(card)) notes.push(`對手模型：隊友可能缺${suitName(leadSuit)}，低牌可製造切牌機會`);
+  }
+  return notes.slice(0, 2);
+}
+
 function aiExplainPlayChoice(game, seat, card) {
   const difficulty = Number(game.settings?.difficulty || 10);
   if (difficulty < 16 || !card) return null;
@@ -3205,7 +3372,8 @@ function aiExplainPlayChoice(game, seat, card) {
   parts.push(...v13Notes);
   parts.push(...aiV14StyleNotes(game, seat, card, ctx));
   parts.push(...aiV15ContinuityNotes(game, seat, card, ctx));
-  if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號、成約差、本局學習、AI風格與長局計畫評分後選出");
+  parts.push(...aiV16OpponentModelNotes(game, seat, card, ctx));
+  if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號、成約差、本局學習、AI風格、長局計畫與對手模型評分後選出");
   return `選 ${cardLong(card)}：${parts.slice(0, 3).join("；")}。`;
 }
 
