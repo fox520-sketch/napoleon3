@@ -842,7 +842,7 @@ function applyAction(game, action) {
     return exchangeCards(game, seat, action.payload?.cardIds || []);
   }
   if (game.phase === PHASE.SECRETARY && game.napoleon === seat && action.type === "chooseSecretary") {
-    return chooseSecretary(game, seat, action.payload?.cardId);
+    return chooseSecretary(game, seat, action.payload?.cardId, action.payload?.aiReason || null);
   }
   if (game.phase === PHASE.PLAY && game.currentPlayer === seat && action.type === "playCard") {
     return playCard(game, seat, action.payload?.cardId, action.payload?.leadSuit || null, action.payload?.aiReason || null);
@@ -987,7 +987,7 @@ function exchangeCards(game, seat, cardIds) {
   return true;
 }
 
-function chooseSecretary(game, seat, cardId) {
+function chooseSecretary(game, seat, cardId, aiReason = null) {
   if (!cardId) return false;
   if (game.buried?.some((c) => c.id === cardId)) return false;
   const owner = game.players.find((p) => p.hand.some((c) => c.id === cardId));
@@ -1004,6 +1004,7 @@ function chooseSecretary(game, seat, cardId) {
   game.requestedId = null;
   const revealText = owner.seat === seat ? "拿破崙自己持有，進入獨裁局。" : "秘書身分先保密，打出秘書牌時公開。";
   appendLog(game, `${game.players[seat].name} 指定 ${cardLong(findCardById(cardId))} 為秘書牌；${revealText}`);
+  if (game.players[seat]?.type === "bot" && aiReason && shouldShowAiThoughts(game)) appendLog(game, `AI計畫：${game.players[seat].name} ${aiReason}`);
   return true;
 }
 
@@ -1257,7 +1258,11 @@ function getBotAction(game) {
   if (game.phase === PHASE.BIDDING) return aiBidAction(game, seat);
   if (game.phase === PHASE.TRUMP && game.napoleon === seat) return { uid: player.uid, seat, type: "chooseTrump", payload: { trump: aiChooseTrump(game, seat) } };
   if (game.phase === PHASE.EXCHANGE && game.napoleon === seat) return { uid: player.uid, seat, type: "exchange", payload: { cardIds: aiChooseBuried(game, seat) } };
-  if (game.phase === PHASE.SECRETARY && game.napoleon === seat) return { uid: player.uid, seat, type: "chooseSecretary", payload: { cardId: aiChooseSecretary(game, seat) } };
+  if (game.phase === PHASE.SECRETARY && game.napoleon === seat) {
+    const cardId = aiChooseSecretary(game, seat);
+    const aiReason = aiV15OpeningPlanReason(game, seat, cardId);
+    return { uid: player.uid, seat, type: "chooseSecretary", payload: { cardId, aiReason } };
+  }
   if (game.phase === PHASE.PLAY) {
     const card = aiChoosePlay(game, seat);
     const aiReason = aiExplainPlayChoice(game, seat, card);
@@ -2416,6 +2421,7 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
   score += aiV12BlunderGuardAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV13AdaptiveLearningAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV14StyleStrategyAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
+  score += aiV15StrategicContinuityAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
 
   return score;
 }
@@ -3037,6 +3043,141 @@ function aiV14StyleNotes(game, seat, card, ctx) {
   return notes;
 }
 
+
+function aiV15StrategicContinuityAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 12) return 0;
+  const weight = aiClamp((difficulty - 11) / 9, 0, 1.7);
+  const trickLen = game.trick?.length || 0;
+  const hand = game.players?.[seat]?.hand || [];
+  const isPoint = isHeadCard(card);
+  const isTrumpOrJoker = Boolean(card.joker || (game.trump && game.trump !== "NT" && card.suit === game.trump));
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const plan = aiV15RoundPlan(game, seat, ctx);
+  const control = aiControlCardValue(game, seat, card, ctx);
+  const currentEnemyWinning = trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam;
+  const currentAllyWinning = trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam;
+  const master = card.suit ? aiIsLikelyMaster(game, seat, card, card.suit, ctx.memory) : Boolean(card.joker || card.id === game.secretaryCardId);
+  const lowNonPoint = !isPoint && !isTrumpOrJoker && !card.joker;
+  let score = 0;
+
+  // V15：長局控制牌預算。控制牌不足時，非關鍵墩更保留；控制牌充足且接近成敗線時才兌現。
+  if (control >= 10) {
+    if (plan.controlBudget === "thin" && !plan.criticalNow && !ctx.late && pointsWithCard <= 1) score -= 8 + control * 0.18;
+    if (plan.controlBudget === "rich" && plan.tempo !== "hold" && (candidateWins || projection.holdProb >= 0.68) && pointsWithCard >= 1) score += 4 + control * 0.10;
+    if (plan.tempo === "cash" && (candidateWins || master) && projection.holdProb >= 0.58) score += 5 + pointsWithCard * 2.4;
+  }
+
+  // V15：每一輪都按同一個節奏打，不反覆在保留與搶頭之間搖擺。
+  if (plan.tempo === "hold") {
+    if (isPoint && !candidateWins && !currentAllyWinning) score -= 9;
+    if (isTrumpOrJoker && !plan.criticalNow && !ctx.late && pointsWithCard === 0) score -= 6;
+    if (lowNonPoint && !candidateWins) score += 3.5;
+  } else if (plan.tempo === "cash") {
+    if (isPoint && (candidateWins || projection.holdProb >= 0.70 || master)) score += 8 + pointsWithCard * 2.6;
+    if (currentEnemyWinning && candidateWins) score += 5 + pointsWithCard * 2;
+    if (currentEnemyWinning && !candidateWins && isPoint) score -= 8;
+  } else if (plan.tempo === "probe") {
+    if (trickLen === 0 && lowNonPoint && card.suit && plan.probeSuits.includes(card.suit)) score += 6;
+    if (trickLen === 0 && isPoint && card.suit && plan.dangerSuits.includes(card.suit) && !master) score -= 9;
+    if (trickLen === 0 && isTrumpOrJoker && !ctx.late) score -= 3.5;
+  }
+
+  // V15：隊伍協調的穩定性。隊友已安全吃時，明確餵頭；隊友不穩時不要硬餵。
+  if (currentAllyWinning) {
+    if (!candidateWins && isPoint && projection.enemySwingProb < 0.26) score += 8 + (ctx.personality?.feed || 0) * 6;
+    if (!candidateWins && isPoint && projection.enemySwingProb >= 0.45) score -= 6;
+    if (candidateWins && !plan.criticalNow) score -= 7 + control * 0.12;
+  }
+
+  // V15：敵方連續成功切牌或收頭的花色，之後領牌更保守；本隊成功的花色可延續。
+  if (card.suit && trickLen === 0) {
+    const suitTrend = plan.suitTempo[card.suit] || 0;
+    if (suitTrend < -0.35 && isPoint && !master) score -= 8 * Math.abs(suitTrend);
+    if (suitTrend > 0.35 && lowNonPoint) score += 4 * suitTrend;
+    if (suitTrend > 0.55 && isPoint && (master || projection.holdProb > 0.7) && plan.tempo === "cash") score += 3 * suitTrend;
+  }
+
+  // V15：殘局一致性。最後幾張不只看最大牌，也看剩下頭牌是否還有退路。
+  if ((ctx.handSize || hand.length) <= 4) {
+    const handHeads = countPoints(hand);
+    const lowExits = hand.filter((c) => !isHeadCard(c) && !c.joker && !(game.trump && game.trump !== "NT" && c.suit === game.trump)).length;
+    if (handHeads >= Math.max(2, lowExits + 1) && isPoint && (candidateWins || master || projection.holdProb >= 0.68)) score += 7;
+    if (lowExits <= 1 && isPoint && !candidateWins && !currentAllyWinning) score -= 7;
+    if (lowExits > 0 && lowNonPoint && !candidateWins && !plan.criticalNow) score += 3;
+  }
+
+  return score * weight;
+}
+
+function aiV15RoundPlan(game, seat, ctx = null) {
+  const context = ctx || aiBuildPlayContext(game, seat);
+  const hand = game.players?.[seat]?.hand || [];
+  const controls = hand.filter((card) => aiControlCardValue(game, seat, card, context) >= 10).length;
+  const remainingTricks = Math.max(1, 10 - (game.trickNo || 0));
+  const controlRatio = controls / Math.max(1, Math.min(remainingTricks, hand.length || remainingTricks));
+  const pointsOnTable = context.pointsOnTable || 0;
+  const criticalNow = context.myTeam === "nap"
+    ? context.napNeeds <= Math.max(2, pointsOnTable + 1)
+    : context.napNeeds <= Math.max(3, pointsOnTable + 2);
+  let tempo = "probe";
+  if (context.contractMode?.mode === "protect" || context.contractMode?.mode === "conserve") tempo = "hold";
+  if (context.contractMode?.mode === "chase" || context.contractMode?.mode === "block" || criticalNow || context.late) tempo = "cash";
+  const controlBudget = controlRatio < 0.22 ? "thin" : controlRatio > 0.46 ? "rich" : "normal";
+
+  const suitTempo = { S: 0, H: 0, D: 0, C: 0 };
+  const histories = Array.isArray(game.trickHistory) ? game.trickHistory : [];
+  for (const trick of histories.slice(-5)) {
+    const suit = trick.leadSuit || aiLeadSuitFromPlays(trick.plays || []);
+    if (!suit || !suitTempo.hasOwnProperty(suit)) continue;
+    const winnerTeam = aiTeamView(game, trick.winner, seat);
+    const delta = (winnerTeam === context.myTeam ? 1 : -1) * (0.18 + Math.min(3, trick.heads || 0) * 0.08);
+    suitTempo[suit] = aiClamp(suitTempo[suit] + delta, -1, 1);
+  }
+
+  const probeSuits = Object.entries(context.suitPlan || {})
+    .filter(([suit, plan]) => plan && plan.voidAllies > 0 && plan.voidOpponents === 0)
+    .map(([suit]) => suit);
+  const dangerSuits = Object.entries(context.suitPlan || {})
+    .filter(([suit, plan]) => plan && plan.voidOpponents > 0 && plan.voidAllies === 0)
+    .map(([suit]) => suit);
+
+  return { tempo, controlBudget, criticalNow, controlRatio, suitTempo, probeSuits, dangerSuits };
+}
+
+function aiV15ContinuityNotes(game, seat, card, ctx) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 16 || !card) return [];
+  const plan = aiV15RoundPlan(game, seat, ctx || aiBuildPlayContext(game, seat));
+  const notes = [];
+  if (plan.tempo === "hold") notes.push("長局計畫：保留控制牌、避免非必要送頭");
+  if (plan.tempo === "cash") notes.push("長局計畫：接近成敗線，優先兌現安全頭");
+  if (plan.tempo === "probe") notes.push("長局計畫：先探門與製造切牌機會");
+  if (plan.controlBudget === "thin") notes.push("控制牌預算偏少，避免過早耗掉王牌/鬼牌");
+  if (card.suit && (plan.suitTempo[card.suit] || 0) < -0.35) notes.push(`本局${suitName(card.suit)}走勢不利，降低冒險`);
+  return notes;
+}
+
+function aiV15OpeningPlanReason(game, seat, secretaryCardId) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 16) return null;
+  const card = findCardById(secretaryCardId);
+  const hand = game.players?.[seat]?.hand || [];
+  const profile = aiEvaluateBidProfile(hand, game.settings, difficulty);
+  const trumpCount = game.trump && game.trump !== "NT" ? hand.filter((c) => c.suit === game.trump || c.joker).length : 0;
+  const heads = countPoints(hand);
+  const shortSuits = ["S", "H", "D", "C"].filter((suit) => hand.filter((c) => c.suit === suit).length <= 1 && suit !== game.trump);
+  const plan = [];
+  if (trumpCount >= 4) plan.push("王牌控制較足，前中盤可視情況抽王牌");
+  else plan.push("王牌控制有限，先保留關鍵王牌");
+  if (heads >= 5) plan.push("手上頭牌多，優先找安全時機兌現");
+  else plan.push("頭牌不足，前期以探門和製造切牌為主");
+  if (shortSuits.length) plan.push(`短門${shortSuits.map(suitName).join("/")}可作為後續切牌方向`);
+  if (card) plan.push(`秘書牌選${cardLong(card)}，用來補強${card.joker ? "最高控制" : suitName(card.suit)}戰力`);
+  plan.push(`期望約${profile.expectedHeads.toFixed(1)}頭`);
+  return plan.slice(0, 3).join("；") + "。";
+}
+
 function aiExplainPlayChoice(game, seat, card) {
   const difficulty = Number(game.settings?.difficulty || 10);
   if (difficulty < 16 || !card) return null;
@@ -3063,7 +3204,8 @@ function aiExplainPlayChoice(game, seat, card) {
   const v13Notes = aiV13LearningNotes(game, seat, card, ctx);
   parts.push(...v13Notes);
   parts.push(...aiV14StyleNotes(game, seat, card, ctx));
-  if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號、成約差、本局學習與AI風格評分後選出");
+  parts.push(...aiV15ContinuityNotes(game, seat, card, ctx));
+  if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號、成約差、本局學習、AI風格與長局計畫評分後選出");
   return `選 ${cardLong(card)}：${parts.slice(0, 3).join("；")}。`;
 }
 
