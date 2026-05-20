@@ -68,6 +68,18 @@
               <option value="20">20 專家</option>
             </select>
           </label>
+          <label class="mini-field">
+            <span>AI 風格</span>
+            <select id="offlineAiStyle">
+              <option value="varied" selected>各有個性</option>
+              <option value="balanced">穩健均衡</option>
+              <option value="conservative">保守少失誤</option>
+              <option value="aggressive">積極搶頭</option>
+              <option value="support">隊友配合</option>
+              <option value="blocker">防守擋約</option>
+              <option value="expert">高手綜合</option>
+            </select>
+          </label>
           <button id="btnStartOffline" class="primary">單人離線開始</button>
         </div>
       </div>
@@ -155,6 +167,19 @@
                 <option value="suitOnly" selected>四花色叫牌（♣ ♦ ♥ ♠）</option>
                 <option value="allowNoTrump">允許無王叫牌</option>
               </select>
+            </label>
+            <label class="field">
+              <span>AI 風格模式</span>
+              <select id="aiStyle">
+                <option value="varied" selected>各有個性：每位電腦有不同打法</option>
+                <option value="balanced">穩健均衡：少冒險、重視安全頭</option>
+                <option value="conservative">保守少失誤：不亂叫、不亂送頭</option>
+                <option value="aggressive">積極搶頭：高壓進攻、敢用控制牌</option>
+                <option value="support">隊友配合：更重視餵頭與製造切牌</option>
+                <option value="blocker">防守擋約：聯合國阻止成約更積極</option>
+                <option value="expert">高手綜合：依局勢自動切換策略</option>
+              </select>
+              <small>影響電腦叫牌、出牌、餵隊友、擋約與保留控制牌的偏好。</small>
             </label>
             <label class="check"><input id="jokerLowLast3" type="checkbox" checked /> 末三輪鬼牌變小</label>
             <label class="check"><input id="summonJokers" type="checkbox" checked /> 前三輪王牌 2/3 可召大／小鬼</label>

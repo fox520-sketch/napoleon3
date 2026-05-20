@@ -133,7 +133,7 @@ function init() {
     $("difficultyLabel").textContent = $("difficulty").value;
     syncLobbySettingsSoon();
   });
-  for (const id of ["buriedMode", "leadMode", "trumpMode", "jokerLowLast3", "summonJokers", "allowSelfSecretary", "showAiThoughts"]) {
+  for (const id of ["buriedMode", "leadMode", "trumpMode", "aiStyle", "jokerLowLast3", "summonJokers", "allowSelfSecretary", "showAiThoughts"]) {
     $(id).addEventListener("change", syncLobbySettingsSoon);
   }
   renderConnectState();
@@ -266,7 +266,8 @@ function startOfflineGame() {
   localStorage.setItem(STORAGE.name, name);
   const settings = {
     ...defaultSettings(),
-    difficulty: Number($("offlineDifficulty").value || 10)
+    difficulty: Number($("offlineDifficulty").value || 10),
+    aiStyle: $("offlineAiStyle")?.value || "varied"
   };
   const seats = {
     0: makeHumanSeat(0, appState.uid, name),
@@ -526,7 +527,7 @@ function renderLobby() {
   applySettingsToUI(room.lobby?.settings || defaultSettings());
   const host = isHost();
   document.querySelectorAll(".host-only").forEach((el) => el.classList.toggle("hidden", !host));
-  for (const id of ["difficulty", "buriedMode", "leadMode", "trumpMode", "jokerLowLast3", "summonJokers", "allowSelfSecretary", "showAiThoughts"]) {
+  for (const id of ["difficulty", "buriedMode", "leadMode", "trumpMode", "aiStyle", "jokerLowLast3", "summonJokers", "allowSelfSecretary", "showAiThoughts"]) {
     $(id).disabled = !host;
   }
   const filled = ordered.filter(Boolean).length;
@@ -542,6 +543,7 @@ function defaultSettings() {
     buriedMode: "addContract",
     leadMode: "next",
     trumpMode: "suitOnly",
+    aiStyle: "varied",
     jokerLowLast3: true,
     summonJokers: true,
     allowSelfSecretary: false,
@@ -555,6 +557,7 @@ function readSettingsFromUI() {
     buriedMode: $("buriedMode").value,
     leadMode: $("leadMode").value,
     trumpMode: $("trumpMode").value,
+    aiStyle: $("aiStyle").value,
     jokerLowLast3: $("jokerLowLast3").checked,
     summonJokers: $("summonJokers").checked,
     allowSelfSecretary: $("allowSelfSecretary").checked,
@@ -568,6 +571,7 @@ function applySettingsToUI(settings) {
   $("buriedMode").value = settings.buriedMode || "addContract";
   $("leadMode").value = settings.leadMode || "next";
   $("trumpMode").value = settings.trumpMode || "suitOnly";
+  $("aiStyle").value = settings.aiStyle || "varied";
   $("jokerLowLast3").checked = settings.jokerLowLast3 !== false;
   $("summonJokers").checked = settings.summonJokers !== false;
   $("allowSelfSecretary").checked = !!settings.allowSelfSecretary;
@@ -1262,22 +1266,33 @@ function getBotAction(game) {
   return null;
 }
 
-function aiPersonality(seat) {
+function aiPersonality(seat, settings = {}) {
   const types = [
-    { type: "balanced", bidBias: 0, risk: 0, feed: 0, block: 0 },
-    { type: "conservative", bidBias: -0.55, risk: -0.34, feed: 0.15, block: 0.12 },
-    { type: "aggressive", bidBias: 0.48, risk: 0.38, feed: -0.06, block: 0.25 },
-    { type: "support", bidBias: -0.18, risk: -0.08, feed: 0.38, block: 0.05 },
-    { type: "blocker", bidBias: 0.05, risk: 0.12, feed: -0.02, block: 0.42 }
+    { type: "balanced", label: "均衡", bidBias: 0, risk: 0, feed: 0, block: 0, control: 0 },
+    { type: "conservative", label: "保守", bidBias: -0.55, risk: -0.34, feed: 0.15, block: 0.12, control: 0.28 },
+    { type: "aggressive", label: "進攻", bidBias: 0.48, risk: 0.38, feed: -0.06, block: 0.25, control: -0.12 },
+    { type: "support", label: "支援", bidBias: -0.18, risk: -0.08, feed: 0.38, block: 0.05, control: 0.12 },
+    { type: "blocker", label: "防守", bidBias: 0.05, risk: 0.12, feed: -0.02, block: 0.42, control: 0.18 }
   ];
-  return types[Math.abs(Number(seat) || 0) % types.length];
+  const style = settings?.aiStyle || "varied";
+  const base = { ...types[Math.abs(Number(seat) || 0) % types.length] };
+  const forced = {
+    balanced: { type: "balanced", label: "均衡", bidBias: 0, risk: -0.04, feed: 0.08, block: 0.08, control: 0.08 },
+    conservative: { type: "conservative", label: "保守", bidBias: -0.62, risk: -0.42, feed: 0.16, block: 0.16, control: 0.36 },
+    aggressive: { type: "aggressive", label: "進攻", bidBias: 0.56, risk: 0.46, feed: -0.08, block: 0.24, control: -0.16 },
+    support: { type: "support", label: "支援", bidBias: -0.12, risk: -0.06, feed: 0.48, block: 0.08, control: 0.1 },
+    blocker: { type: "blocker", label: "防守", bidBias: 0.03, risk: 0.04, feed: -0.03, block: 0.55, control: 0.22 },
+    expert: { type: "expert", label: "高手", bidBias: 0.08, risk: 0.08, feed: 0.26, block: 0.34, control: 0.24 }
+  };
+  if (style && style !== "varied" && forced[style]) return forced[style];
+  return base;
 }
 
 function aiBidAction(game, seat) {
   const player = game.players[seat];
   const highest = game.bidding?.highest || null;
   const difficulty = Number(game.settings?.difficulty || 10);
-  const personality = aiPersonality(seat);
+  const personality = aiPersonality(seat, game.settings);
   const profile = aiEvaluateBidProfile(player.hand, game.settings, difficulty);
   const legalAll = legalBidsAbove(highest, game.settings);
   if (!legalAll.length) return { uid: player.uid, seat, type: "pass", payload: { aiReason: "沒有合法叫品可蓋過目前最高叫品，因此 Pass。" } };
@@ -1673,7 +1688,7 @@ function aiChoosePlay(game, seat) {
     const advancedScore = aiAdvancedPlayAdjustment(game, seat, card, context, legal);
     return { card, score: baseScore + advancedScore };
   });
-  return aiPickScoredCard(scored, difficulty);
+  return aiPickScoredCard(scored, difficulty, game.settings?.aiStyle || "varied");
 }
 
 function aiBuildPlayContext(game, seat) {
@@ -1701,7 +1716,7 @@ function aiBuildPlayContext(game, seat) {
   const memory = aiBuildCardMemory(game, seat);
   const secretaryGuess = aiInferSecretaryOwner(game, seat, memory);
   const contractMode = aiContractMode(game, seat, totals, pointsOnTable, remainingHeads, napNeeds, myTeam);
-  const personality = aiPersonality(seat);
+  const personality = aiPersonality(seat, game.settings);
   const trumpState = aiTrumpControlState(game, seat, memory);
   const suitPlan = aiSuitPlan(game, seat, myTeam, memory);
   return {
@@ -2400,6 +2415,7 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
   score += aiV11SignalPressureAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV12BlunderGuardAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV13AdaptiveLearningAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
+  score += aiV14StyleStrategyAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
 
   return score;
 }
@@ -2949,6 +2965,78 @@ function aiV13LearningNotes(game, seat, card, ctx) {
   return notes;
 }
 
+
+function aiV14StyleStrategyAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) {
+  const difficulty = Number(game.settings?.difficulty || ctx.difficulty || 10);
+  const style = game.settings?.aiStyle || "varied";
+  if (difficulty < 5 && style === "varied") return 0;
+  const weight = aiClamp((difficulty - 4) / 16, 0.18, 1.45);
+  const type = ctx.personality?.type || "balanced";
+  const trickLen = game.trick?.length || 0;
+  const isPoint = isHeadCard(card);
+  const isTrumpOrJoker = Boolean(card.joker || (game.trump && game.trump !== "NT" && card.suit === game.trump));
+  const control = aiControlCardValue(game, seat, card, ctx);
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const currentAllyWinning = trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam;
+  const currentEnemyWinning = trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam;
+  const critical = ctx.myTeam === "nap"
+    ? ctx.napNeeds <= Math.max(2, pointsWithCard + 1)
+    : ctx.napNeeds <= Math.max(3, pointsWithCard + 2);
+  let score = 0;
+
+  // V14：AI 風格模式。讓同樣難度下的電腦不只強弱不同，也有打法差異。
+  if (type === "conservative") {
+    if (isPoint && projection.holdProb < 0.78 && !ctx.actingLast) score -= 10;
+    if (control >= 14 && !critical && !ctx.late) score -= 7 + control * 0.14;
+    if (candidateWins && pointsWithCard >= 2 && projection.holdProb >= 0.74) score += 5;
+  }
+
+  if (type === "aggressive") {
+    if (candidateWins && pointsWithCard >= 1) score += 8 + pointsWithCard * 2.2;
+    if (trickLen === 0 && isTrumpOrJoker && ctx.contractMode.mode === "chase") score += 6;
+    if (!candidateWins && isPoint && currentEnemyWinning) score -= 7;
+    if (critical && (candidateWins || projection.holdProb >= 0.62)) score += 8;
+  }
+
+  if (type === "support") {
+    if (currentAllyWinning && !candidateWins && isPoint && projection.enemySwingProb < 0.32) score += 11;
+    if (currentAllyWinning && candidateWins && !critical) score -= 10;
+    if (trickLen === 0 && card.suit && !isPoint && ctx.seatsAfter.some((s) => aiTeamView(game, s, seat) === ctx.myTeam && aiLikelyVoid(ctx, s, card.suit))) score += 7;
+  }
+
+  if (type === "blocker") {
+    if (ctx.myTeam === "def" && currentEnemyWinning && candidateWins) score += 9 + pointsWithCard * 3;
+    if (ctx.myTeam === "def" && isPoint && !candidateWins && projection.enemyHoldProb >= 0.45) score -= 12;
+    if (ctx.myTeam === "def" && critical && (candidateWins || projection.holdProb >= 0.6)) score += 12;
+    if (ctx.myTeam === "nap" && !critical && control >= 14 && !ctx.late) score -= 4;
+  }
+
+  if (type === "expert") {
+    // 高手綜合：按局勢在保約、搶約、擋約、餵隊友之間切換，而不是固定偏進攻或保守。
+    if (critical && (candidateWins || projection.holdProb >= 0.64)) score += 12 + pointsWithCard * 3;
+    if (!critical && control >= 16 && !ctx.late && pointsWithCard <= 1) score -= 7;
+    if (currentAllyWinning && !candidateWins && isPoint && projection.enemySwingProb < 0.28) score += 8;
+    if (currentEnemyWinning && candidateWins && pointsWithCard >= 1) score += 7;
+    if (trickLen === 0 && card.suit && !isPoint && ctx.suitPlan?.[card.suit]?.voidAllies > 0) score += 5;
+    if (isPoint && projection.enemyCutPressure > 0.55 && !ctx.actingLast) score -= 9;
+  }
+
+  return score * weight;
+}
+
+function aiV14StyleNotes(game, seat, card, ctx) {
+  const type = ctx?.personality?.type || aiPersonality(seat, game.settings).type;
+  const label = ctx?.personality?.label || aiPersonality(seat, game.settings).label || "均衡";
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx || aiBuildPlayContext(game, seat));
+  const notes = [`AI風格：${label}`];
+  if (type === "conservative" && projection.holdProb < 0.78) notes.push("保守模式會降低不安全頭牌權重");
+  if (type === "aggressive" && (isHeadCard(card) || projection.holdProb >= 0.62)) notes.push("進攻模式偏向搶頭與主動控制");
+  if (type === "support") notes.push("支援模式優先觀察隊友是否能吃或切牌");
+  if (type === "blocker") notes.push("防守模式會優先阻止拿破崙軍接近成約");
+  if (type === "expert") notes.push("高手模式依成約差切換保約、搶約與擋約");
+  return notes;
+}
+
 function aiExplainPlayChoice(game, seat, card) {
   const difficulty = Number(game.settings?.difficulty || 10);
   if (difficulty < 16 || !card) return null;
@@ -2974,8 +3062,9 @@ function aiExplainPlayChoice(game, seat, card) {
   parts.push(...v12Notes);
   const v13Notes = aiV13LearningNotes(game, seat, card, ctx);
   parts.push(...v13Notes);
-  if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號、成約差與本局學習評分後選出");
-  return `選 ${cardLong(card)}：${parts.slice(0, 2).join("；")}。`;
+  parts.push(...aiV14StyleNotes(game, seat, card, ctx));
+  if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號、成約差、本局學習與AI風格評分後選出");
+  return `選 ${cardLong(card)}：${parts.slice(0, 3).join("；")}。`;
 }
 
 function aiControlCardValue(game, seat, card, ctx) {
@@ -3186,10 +3275,19 @@ function aiV11PartnershipSignal(game, observerSeat) {
 }
 
 
-function aiPickScoredCard(scored, difficulty) {
+function aiPickScoredCard(scored, difficulty, aiStyle = "varied") {
   const tier = difficulty >= 18 ? "expert" : difficulty >= 14 ? "hard" : difficulty >= 9 ? "normal" : "easy";
   const spreadMap = { easy: 18, normal: 8.5, hard: 3.4, expert: 0.95 };
-  const spread = spreadMap[tier] ?? Math.max(0.34, (21 - difficulty) * 1.32);
+  const styleSpread = {
+    expert: 0.58,
+    conservative: 0.72,
+    blocker: 0.82,
+    balanced: 0.9,
+    support: 0.95,
+    varied: 1,
+    aggressive: 1.08
+  };
+  const spread = (spreadMap[tier] ?? Math.max(0.34, (21 - difficulty) * 1.32)) * (styleSpread[aiStyle] || 1);
   const withNoise = scored.map((item) => ({
     card: item.card,
     score: item.score + (Math.random() - 0.5) * spread
@@ -3584,7 +3682,10 @@ function renderSeats(game) {
     const capturedHeads = countPoints(game.captured?.[seat] || []);
     tags.push(`<span class="tag">${p.hand?.length || 0} 張</span>`);
     tags.push(`<span class="tag">吃 ${capturedHeads} 頭</span>`);
-    if (p.type === "bot") tags.push(`<span class="tag gold">電腦</span>`);
+    if (p.type === "bot") {
+      const aiLabel = aiPersonality(seat, game.settings).label || "電腦";
+      tags.push(`<span class="tag gold">AI ${escapeHtml(aiLabel)}</span>`);
+    }
     if (game.phase === PHASE.BIDDING && game.currentPlayer === seat) tags.push(`<span class="tag call-active">輪到叫牌</span>`);
     if (biddingHighest && biddingHighest.seat === seat) tags.push(`<span class="tag call-high">最高 ${escapeHtml(formatBid(biddingHighest))}</span>`);
     if (p.seat === game.napoleon) tags.push(`<span class="tag danger">拿破崙</span>`);
