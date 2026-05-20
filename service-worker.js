@@ -1,4 +1,4 @@
-const CACHE_NAME = "napoleon-secretary-v13-ai-v12-blunder-guard";
+const CACHE_NAME = "napoleon-secretary-v14-ai-v13-learning";
 const ASSETS = [
   "./",
   "./index.html",

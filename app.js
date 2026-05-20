@@ -2399,6 +2399,7 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
   score += aiV10EndgameMatrixAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV11SignalPressureAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV12BlunderGuardAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
+  score += aiV13AdaptiveLearningAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
 
   return score;
 }
@@ -2840,6 +2841,114 @@ function aiV12BlunderNotes(game, seat, card, ctx) {
   return notes;
 }
 
+
+function aiV13AdaptiveLearningAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) {
+  const difficulty = Number(game.settings?.difficulty || ctx.difficulty || 10);
+  if (difficulty < 10) return 0;
+  const weight = aiClamp((difficulty - 9) / 11, 0, 1.45);
+  const learning = aiV13LearningProfile(game, seat, ctx);
+  const trickLen = game.trick?.length || 0;
+  const isPoint = isHeadCard(card);
+  const isControl = aiControlCardValue(game, seat, card, ctx) >= 14;
+  const suit = card.joker ? "JOKER" : card.suit;
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const currentAllyWinning = trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam;
+  const currentEnemyWinning = trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam;
+  let score = 0;
+
+  // V13：從本局前幾墩的結果調整同類決策，避免重複「頭牌送給對手」或「控制牌被迫浪費」。
+  const lostHeadRisk = suit ? (learning.lostHeadSuit[suit] || 0) : 0;
+  if (lostHeadRisk > 0 && isPoint && !candidateWins) score -= (7 + lostHeadRisk * 5) * weight;
+  if (lostHeadRisk > 0 && trickLen === 0 && isPoint && projection.holdProb < 0.72) score -= (5 + lostHeadRisk * 4) * weight;
+
+  // V13：如果之前同花色低牌成功讓隊友切牌，類似局面會更願意再嘗試；但不拿頭牌去冒險。
+  const allyCutHint = suit ? (learning.allyCutSuits[suit] || 0) : 0;
+  if (allyCutHint > 0 && !isPoint && !candidateWins && ctx.alliesAfter > 0) score += (3.5 + allyCutHint * 2.2) * weight;
+  if (allyCutHint > 0 && isPoint && projection.enemySwingProb > 0.35) score -= (4 + allyCutHint * 2) * weight;
+
+  // V13：成功餵頭的安全模型。只有隊友目前穩吃、後手對手壓力低，才重複餵頭。
+  if (currentAllyWinning && !candidateWins && isPoint) {
+    if (learning.safeFeedSuccess >= 1 && projection.enemySwingProb < 0.34) score += (5 + learning.safeFeedSuccess * 2) * weight;
+    if (learning.failedFeed >= 1 && projection.enemySwingProb >= 0.28) score -= (8 + learning.failedFeed * 3) * weight;
+  }
+
+  // V13：若前面有控制牌打出去卻沒拿下關鍵頭數，高難度會更保留控制牌。
+  if (isControl && learning.wastedControls > 0 && !ctx.late && pointsWithCard <= 1 && !currentEnemyWinning) {
+    score -= (6 + learning.wastedControls * 3) * weight;
+  }
+
+  // V13：殘局復盤。若自己本局已多次失去有頭墩，最後幾墩會更偏向穩收或安全脫手。
+  if (ctx.handSize <= 4 && learning.lostHeadTricks >= 2) {
+    if (candidateWins && projection.holdProb >= 0.64 && pointsWithCard > 0) score += (7 + pointsWithCard * 2) * weight;
+    if (!candidateWins && isPoint && !currentAllyWinning) score -= (8 + learning.lostHeadTricks * 2) * weight;
+  }
+
+  return score;
+}
+
+function aiV13LearningProfile(game, seat, ctx = null) {
+  const histories = Array.isArray(game?.trickHistory) ? game.trickHistory : [];
+  const myTeam = ctx?.myTeam || aiTeamView(game, seat, seat);
+  const profile = {
+    lostHeadSuit: { S: 0, H: 0, D: 0, C: 0, JOKER: 0 },
+    allyCutSuits: { S: 0, H: 0, D: 0, C: 0 },
+    safeFeedSuccess: 0,
+    failedFeed: 0,
+    wastedControls: 0,
+    lostHeadTricks: 0
+  };
+
+  for (const trick of histories.slice(-8)) {
+    const plays = Array.isArray(trick.plays) ? trick.plays : [];
+    const myPlay = plays.find((p2) => p2.seat === seat);
+    if (!myPlay?.card) continue;
+    const winnerTeam = aiTeamView(game, trick.winner, seat);
+    const myCard = myPlay.card;
+    const suit = myCard.joker ? "JOKER" : myCard.suit;
+    const myPoint = isHeadCard(myCard);
+    const myControl = aiControlCardValue(game, seat, myCard, ctx || aiBuildPlayContext(game, seat)) >= 14;
+    const teamWon = winnerTeam === myTeam;
+
+    if (!teamWon && myPoint) {
+      if (profile.lostHeadSuit[suit] !== undefined) profile.lostHeadSuit[suit] += 1;
+      profile.lostHeadTricks += 1;
+    }
+    if (!teamWon && myControl && (trick.heads || 0) <= 1) profile.wastedControls += 1;
+
+    const index = plays.findIndex((p2) => p2.seat === seat);
+    const beforePlays = index > 0 ? plays.slice(0, index) : [];
+    const leadSuit = trick.leadSuit || aiLeadSuitFromPlays(plays);
+    const winnerPlay = plays.find((p2) => p2.seat === trick.winner);
+    const winnerUsedCut = winnerPlay?.card && leadSuit && (winnerPlay.card.joker || (game.trump && game.trump !== "NT" && winnerPlay.card.suit === game.trump && leadSuit !== game.trump));
+    if (teamWon && trick.winner !== seat && winnerUsedCut && leadSuit && !myPoint) {
+      profile.allyCutSuits[leadSuit] = (profile.allyCutSuits[leadSuit] || 0) + 1;
+    }
+
+    if (myPoint && beforePlays.length) {
+      let beforeBest = beforePlays[0];
+      for (const play of beforePlays.slice(1)) {
+        if (cardStrength(play.card, game, leadSuit) > cardStrength(beforeBest.card, game, leadSuit)) beforeBest = play;
+      }
+      const beforeBestTeam = aiTeamView(game, beforeBest.seat, seat);
+      if (beforeBestTeam === myTeam && teamWon && trick.winner !== seat) profile.safeFeedSuccess += 1;
+      if (beforeBestTeam === myTeam && !teamWon) profile.failedFeed += 1;
+    }
+  }
+  return profile;
+}
+
+function aiV13LearningNotes(game, seat, card, ctx) {
+  const notes = [];
+  if (!card || Number(game.settings?.difficulty || 10) < 16) return notes;
+  const learning = aiV13LearningProfile(game, seat, ctx);
+  const suit = card.joker ? "JOKER" : card.suit;
+  if (suit && learning.lostHeadSuit[suit] >= 1 && isHeadCard(card)) notes.push("本局同門頭牌曾被對手收走，改用較保守評分");
+  if (suit && learning.allyCutSuits[suit] >= 1 && !isHeadCard(card)) notes.push("本局此門曾成功製造隊友切牌，保留低牌引導價值");
+  if (learning.failedFeed >= 1 && ctx.currentWinnerTeam === ctx.myTeam && isHeadCard(card)) notes.push("曾有餵頭失敗紀錄，先覆核後手風險");
+  if (learning.wastedControls >= 1 && aiControlCardValue(game, seat, card, ctx) >= 14) notes.push("曾有控制牌低效使用，非關鍵墩傾向保留");
+  return notes;
+}
+
 function aiExplainPlayChoice(game, seat, card) {
   const difficulty = Number(game.settings?.difficulty || 10);
   if (difficulty < 16 || !card) return null;
@@ -2863,7 +2972,9 @@ function aiExplainPlayChoice(game, seat, card) {
   if (!game.secretaryRevealed && v11Signal?.exposureRisk > 0.5) parts.push("依餵頭訊號重新估計暗秘書風險");
   const v12Notes = aiV12BlunderNotes(game, seat, card, ctx);
   parts.push(...v12Notes);
-  if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號與成約差評分後選出");
+  const v13Notes = aiV13LearningNotes(game, seat, card, ctx);
+  parts.push(...v13Notes);
+  if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號、成約差與本局學習評分後選出");
   return `選 ${cardLong(card)}：${parts.slice(0, 2).join("；")}。`;
 }
 
