@@ -262,6 +262,8 @@ function aiHealthSettingsFromUI() {
     ...defaultSettings(),
     difficulty: Number($("offlineDifficulty")?.value || 16),
     aiStyle: $("offlineAiStyle")?.value || "expert",
+    healthRounds: Number($("aiTestRounds")?.value || 6),
+    balanceTarget: $("aiBalanceTarget")?.value || "normal",
     showAiThoughts: false
   };
 }
@@ -277,7 +279,8 @@ async function runAiHealthCheck() {
   try {
     await new Promise((resolve) => setTimeout(resolve, 30));
     const settings = aiHealthSettingsFromUI();
-    const summary = aiRunHealthSimulation(settings, 6);
+    const rounds = Math.max(6, Math.min(36, Number(settings.healthRounds || 6)));
+    const summary = aiRunHealthSimulation(settings, rounds);
     status.innerHTML = aiHealthSummaryHtml(summary);
     toast(`AI 健康檢查完成：${summary.healthScore} 分`);
   } catch (error) {
@@ -310,7 +313,9 @@ function aiRunHealthSimulation(settings, rounds = 6) {
     noBid: 0,
     loops: 0,
     samples: [],
-    healthVersion: "AI V21"
+    swingRounds: 0,
+    closeRounds: 0,
+    healthVersion: "AI V22"
   };
   let scores = [0, 0, 0, 0, 0];
   for (let round = 0; round < rounds; round += 1) {
@@ -340,6 +345,8 @@ function aiRunHealthSimulation(settings, rounds = 6) {
     aggregate.napMade += game.roundResult?.made ? 1 : 0;
     aggregate.totalContract += totals.contract || 0;
     aggregate.totalNapHeads += totals.teamHeads || 0;
+    if (Math.abs((totals.teamHeads || 0) - (totals.contract || 0)) <= 1) aggregate.closeRounds += 1;
+    if ((totals.teamHeads || 0) >= (totals.contract || 0) - 1 && (totals.teamHeads || 0) <= (totals.contract || 0) + 1) aggregate.swingRounds += 1;
     if (!game.bidding?.highest) aggregate.noBid += 1;
     if ((game.bid?.amount || game.bidAmount || 0) >= 13 && totals.teamHeads < (totals.contract || 0) - 2) aggregate.overbid += 1;
     const audit = aiAuditRoundTactics(game);
@@ -355,7 +362,13 @@ function aiRunHealthSimulation(settings, rounds = 6) {
   }
   const completed = Math.max(1, aggregate.completed);
   aggregate.madeRate = aggregate.napMade / completed;
-  const balancePenalty = aggregate.madeRate > 0.68 ? (aggregate.madeRate - 0.68) * 18 : (aggregate.madeRate < 0.35 ? (0.35 - aggregate.madeRate) * 12 : 0);
+  const targetRange = aiHealthTargetRange(settings.balanceTarget || "normal");
+  aggregate.targetLow = targetRange.low;
+  aggregate.targetHigh = targetRange.high;
+  aggregate.targetLabel = targetRange.label;
+  const balancePenalty = aggregate.madeRate > targetRange.high + 0.08
+    ? (aggregate.madeRate - targetRange.high - 0.08) * 18
+    : (aggregate.madeRate < targetRange.low - 0.10 ? (targetRange.low - 0.10 - aggregate.madeRate) * 12 : 0);
   const penalty = aggregate.failed * 12
     + aggregate.avoidableHeadGifts * 2.4
     + aggregate.forcedHeadGifts * 0.45
@@ -366,16 +379,49 @@ function aiRunHealthSimulation(settings, rounds = 6) {
   aggregate.healthScore = Math.max(45, Math.min(99, Math.round(100 - penalty / completed + Math.min(4, aggregate.blockStops / completed))));
   aggregate.avgContract = aggregate.totalContract / completed;
   aggregate.avgNapHeads = aggregate.totalNapHeads / completed;
-  aggregate.balanceNote = aggregate.madeRate > 0.68 ? "拿破崙偏強，聯合國需加強擋約" : (aggregate.madeRate < 0.45 ? "聯合國偏強，拿破崙可能過難" : (aggregate.madeRate > 0.60 ? "拿破崙略強，防守仍可加強" : "攻防分布正常"));
-  aggregate.v21AttackNote = aggregate.madeRate < 0.45
-    ? "V21 已啟用拿破崙進攻補強：落後時更敢搶頭、秘書更願意救局。"
-    : (aggregate.madeRate > 0.60 ? "拿破崙達標率略高，建議觀察聯合國擋約效率。" : "拿破崙達標率落在目標區間，攻防張力良好。");
+  aggregate.closeRate = aggregate.closeRounds / completed;
+  aggregate.confidenceLabel = rounds >= 30 ? "高信度" : (rounds >= 18 ? "穩定" : (rounds >= 12 ? "標準" : "快速"));
+  aggregate.balanceNote = aiV22BalanceNote(aggregate.madeRate, targetRange);
+  aggregate.v21AttackNote = aggregate.madeRate < targetRange.low
+    ? "拿破崙仍偏難：V22 會建議提高進攻補強或降低聯合國擋約強度。"
+    : (aggregate.madeRate > targetRange.high ? "拿破崙略強：V22 會建議提高聯合國後手風險與擋約權重。" : "拿破崙達標率落在目標區間，攻防張力良好。");
+  aggregate.v22TuningSuggestion = aiV22TuningSuggestion(aggregate, targetRange);
   aggregate.suspiciousHeadGifts = (aggregate.avoidableHeadGifts || 0) + (aggregate.forcedHeadGifts || 0);
   aggregate.preventableRatio = aggregate.suspiciousHeadGifts ? (aggregate.avoidableHeadGifts || 0) / aggregate.suspiciousHeadGifts : 0;
   aggregate.reportNote = aggregate.avoidableHeadGifts <= 12
     ? "可避免送頭低，主要剩被迫跟牌或局勢交換。"
     : (aggregate.avoidableHeadGifts <= 24 ? "可避免送頭中等，仍可觀察後手風險。" : "可避免送頭偏高，建議提高防守與保守度。" );
   return aggregate;
+}
+
+function aiHealthTargetRange(mode = "normal") {
+  if (mode === "hard-nap") return { low: 0.35, high: 0.50, label: "拿破崙挑戰 35–50%" };
+  if (mode === "easy-nap") return { low: 0.55, high: 0.70, label: "拿破崙友善 55–70%" };
+  return { low: 0.45, high: 0.60, label: "標準 45–60%" };
+}
+
+function aiV22BalanceNote(madeRate, target) {
+  if (madeRate < target.low - 0.08) return "聯合國明顯偏強，拿破崙需要更多進攻窗口";
+  if (madeRate < target.low) return "聯合國略強，拿破崙接近但偏難";
+  if (madeRate > target.high + 0.08) return "拿破崙明顯偏強，聯合國需提升擋約";
+  if (madeRate > target.high) return "拿破崙略強，防守仍可加強";
+  return "攻防分布正常";
+}
+
+function aiV22TuningSuggestion(summary, target) {
+  const madeRate = summary.madeRate || 0;
+  const avoidable = summary.avoidableHeadGifts || 0;
+  const controlWaste = summary.controlWaste || 0;
+  if (madeRate < target.low) {
+    if ((summary.avgContract || 0) - (summary.avgNapHeads || 0) <= 1.3) return "拿破崙常差一點，建議保留 V21/V22 進攻補強並提高秘書救局權重。";
+    return "拿破崙偏難，建議降低防家非關鍵擋約，讓拿破崙軍更敢兌現控制牌。";
+  }
+  if (madeRate > target.high) {
+    return avoidable > 10 ? "拿破崙偏強且可避免送頭偏高，建議提高後手風險與防守權重。" : "拿破崙偏強但送頭不高，建議提高聯合國低成本擋約。";
+  }
+  if (controlWaste > Math.max(3, summary.rounds * 0.8)) return "攻防平衡，但控制牌浪費偏多，建議保留鬼牌/秘書牌到關鍵墩。";
+  if ((summary.closeRate || 0) >= 0.45) return "多數局接近成敗線，節奏良好，可維持目前參數。";
+  return "攻防落在目標區間，可再用 24 或 36 局高信度測試確認。";
 }
 
 function aiAuditRoundTactics(game) {
@@ -461,6 +507,8 @@ function aiHealthSummaryHtml(summary) {
     ["拿破崙達標率", `${Math.round(summary.madeRate * 100)}%`],
     ["平均成約", `${summary.avgContract.toFixed(1)} 頭`],
     ["平均拿破崙軍頭數", `${summary.avgNapHeads.toFixed(1)} 頭`],
+    ["測試信度", `${summary.confidenceLabel || "快速"}（${summary.rounds}局）`],
+    ["平衡目標", summary.targetLabel || "標準 45–60%"],
     ["攻防平衡", summary.balanceNote || "-"],
     ["可疑送頭總數", `${summary.suspiciousHeadGifts || 0}`],
     ["可避免送頭", `${summary.avoidableHeadGifts || 0}`],
@@ -468,9 +516,11 @@ function aiHealthSummaryHtml(summary) {
     ["安全餵隊友", `${summary.safeFeeds || 0}`],
     ["擋約/攔頭", `${summary.blockStops || 0}`],
     ["低成本擋約", `${summary.lowCostBlocks || 0}`],
+    ["接近成敗線", `${summary.closeRounds || 0} 局`],
     ["控制牌浪費警示", `${summary.controlWaste}`],
     ["V20 送頭判讀", summary.reportNote || "-"],
-    ["V21 攻防建議", summary.v21AttackNote || "-"]
+    ["V21 攻防建議", summary.v21AttackNote || "-"],
+    ["V22 自動建議", summary.v22TuningSuggestion || "-"]
   ];
   const detail = summary.samples.filter(Boolean).slice(0, 3).map((line) => `<li>${escapeHtml(line)}</li>`).join("");
   return `
@@ -2658,6 +2708,7 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
   score += aiV19DefenseBalanceAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV20HeadReportRiskAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV21NapoleonAttackBalanceAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
+  score += aiV22AdaptiveBalanceAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
 
   return score;
 }
@@ -3907,6 +3958,67 @@ function aiV21NapoleonAttackBalanceNotes(game, seat, card, ctx) {
   return notes.slice(0, 2);
 }
 
+function aiV22AdaptiveBalanceAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 11 || !card || !ctx) return 0;
+  const weight = aiClamp((difficulty - 10) / 10, 0.2, 1.25);
+  const trickLen = game.trick?.length || 0;
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const isPoint = isHeadCard(card);
+  const isControl = aiControlCardValue(game, seat, card, ctx) >= 12;
+  const currentEnemyWinning = trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam;
+  const currentAllyWinning = trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam;
+  const remainingHeads = Math.max(1, ctx.remainingHeads || 1);
+  const napProgress = 1 - aiClamp((ctx.napNeeds || 0) / remainingHeads, 0, 1);
+  let score = 0;
+
+  // V22：用成約距離微調攻防。拿破崙常差一兩頭時，拿破崙軍要敢收；防家在非關鍵小墩不要過度壓制。
+  if (ctx.myTeam === "nap") {
+    const chaseWindow = ctx.napNeeds >= Math.max(2, pointsWithCard + 1) && ctx.napNeeds <= Math.max(6, remainingHeads * 0.62);
+    const desperate = ctx.napNeeds > remainingHeads * 0.62;
+    if ((chaseWindow || desperate) && candidateWins && (pointsWithCard > 0 || isControl || projection.holdProb >= 0.62)) {
+      score += (5 + pointsWithCard * 3.2 + (desperate ? 3 : 0)) * weight;
+    }
+    if ((chaseWindow || desperate) && currentAllyWinning && isPoint && !candidateWins && (ctx.actingLast || projection.enemySwingProb < 0.32)) {
+      score += (5 + pointsWithCard * 1.8) * weight;
+    }
+    if ((chaseWindow || desperate) && !game.secretaryRevealed && card.id === game.secretaryCardId && (candidateWins || projection.holdProb > 0.56 || ctx.handSize <= 4)) {
+      score += (10 + Math.max(0, ctx.napNeeds - pointsWithCard)) * weight;
+    }
+  } else {
+    const napNearMade = ctx.napNeeds <= Math.max(3, pointsWithCard + 1);
+    const napFarBehind = ctx.napNeeds >= Math.max(5, remainingHeads * 0.55);
+    if (napNearMade && currentEnemyWinning && candidateWins) score += (6 + pointsWithCard * 3) * weight;
+    if (napFarBehind && candidateWins && pointsWithCard <= 1 && isControl && !ctx.late && !ctx.actingLast) score -= 5 * weight;
+    if (napFarBehind && trickLen === 0 && isPoint && projection.enemyCutPressure > 0.32) score -= 4 * weight;
+  }
+
+  // 低難度保留一點不穩，高難度才完整啟用 V22 的後手保險。
+  if (difficulty >= 16 && isPoint && !candidateWins && currentEnemyWinning && !ctx.actingLast) {
+    score -= (projection.enemyHoldProb * 5 + projection.enemyCutPressure * 4) * weight;
+  }
+  if (difficulty >= 16 && isPoint && currentAllyWinning && !candidateWins && projection.enemySwingProb < 0.22) {
+    score += 3.5 * weight;
+  }
+
+  return score;
+}
+
+function aiV22AdaptiveBalanceNotes(game, seat, card, ctx) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 16 || !card || !ctx) return [];
+  const notes = [];
+  const trickLen = game.trick?.length || 0;
+  const candidateWins = trickLen === 0 ? aiLikelyLeadWin(game, seat, card) >= 0.66 : wouldWin(game, card);
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const pointsWithCard = (ctx.pointsOnTable || 0) + (isHeadCard(card) ? 1 : 0);
+  const remainingHeads = Math.max(1, ctx.remainingHeads || 1);
+  if (ctx.myTeam === "nap" && ctx.napNeeds >= Math.max(2, pointsWithCard + 1) && candidateWins) notes.push("V22攻防平衡：拿破崙仍需追頭，優先兌現可守住的關鍵墩");
+  if (ctx.myTeam === "def" && ctx.napNeeds <= Math.max(3, pointsWithCard + 1) && candidateWins) notes.push("V22擋約校正：拿破崙接近成約，防家提高攔截權重");
+  if (ctx.myTeam === "def" && ctx.napNeeds >= Math.max(5, remainingHeads * 0.55) && projection.enemySwingProb < 0.35) notes.push("V22節奏校正：拿破崙明顯落後，防家保留控制牌避免過度壓制");
+  return notes.slice(0, 2);
+}
+
 function aiExplainPlayChoice(game, seat, card) {
   const difficulty = Number(game.settings?.difficulty || 10);
   if (difficulty < 16 || !card) return null;
@@ -3939,7 +4051,8 @@ function aiExplainPlayChoice(game, seat, card) {
   parts.push(...aiV19DefenseBalanceNotes(game, seat, card, ctx));
   parts.push(...aiV20HeadReportRiskNotes(game, seat, card, ctx));
   parts.push(...aiV21NapoleonAttackBalanceNotes(game, seat, card, ctx));
-  if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號、成約差、本局學習、AI風格、長局計畫、對手模型、送頭防護與防守平衡評分後選出");
+  parts.push(...aiV22AdaptiveBalanceNotes(game, seat, card, ctx));
+  if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號、成約差、本局學習、AI風格、長局計畫、對手模型、送頭防護、防守平衡與V22攻防校正評分後選出");
   return `選 ${cardLong(card)}：${parts.slice(0, 3).join("；")}。`;
 }
 

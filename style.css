@@ -1495,6 +1495,8 @@ body[data-theme="twilight"] .play-rule-hint {
   box-shadow: 0 14px 34px rgba(18, 87, 113, 0.08);
 }
 .ai-test-card h3 { margin-bottom: 0.32rem; }
+.ai-test-controls { display: flex; flex-wrap: wrap; gap: 0.65rem; margin: 0.55rem 0 0.35rem; }
+.ai-test-controls .mini-field { min-width: 150px; }
 .ai-test-status { margin: 0.45rem 0 0; font-size: 0.9rem; line-height: 1.55; }
 .ai-health-score {
   display: inline-flex;
@@ -1529,6 +1531,8 @@ body[data-theme="twilight"] .ai-health-notes { color: #d3ddfb; }
 
 @media (max-width: 720px) {
   .ai-test-card { align-items: stretch; flex-direction: column; padding: 0.85rem; }
+  .ai-test-controls { flex-direction: column; gap: 0.45rem; }
+  .ai-test-controls .mini-field { min-width: 0; }
   .ai-test-card button { width: 100%; }
   .ai-health-grid { grid-template-columns: 1fr auto; }
 }

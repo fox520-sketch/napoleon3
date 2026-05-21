@@ -87,7 +87,26 @@
       <div class="ai-test-card">
         <div>
           <h3>AI 健康檢查</h3>
-          <p class="hint">快速跑 6 局全電腦測試，檢查送頭、浪費控制牌、叫牌穩定度與成約分布。會使用上方的難度與 AI 風格。</p>
+          <p class="hint">快速跑全電腦測試，檢查送頭、浪費控制牌、叫牌穩定度與成約分布。會使用上方的難度與 AI 風格。</p>
+          <div class="ai-test-controls">
+            <label class="mini-field">
+              <span>測試局數</span>
+              <select id="aiTestRounds">
+                <option value="6" selected>6 局快速</option>
+                <option value="12">12 局標準</option>
+                <option value="24">24 局穩定</option>
+                <option value="36">36 局高信度</option>
+              </select>
+            </label>
+            <label class="mini-field">
+              <span>平衡目標</span>
+              <select id="aiBalanceTarget">
+                <option value="normal" selected>標準 45–60%</option>
+                <option value="hard-nap">拿破崙挑戰 35–50%</option>
+                <option value="easy-nap">拿破崙友善 55–70%</option>
+              </select>
+            </label>
+          </div>
           <p id="aiTestStatus" class="ai-test-status">尚未執行測試。</p>
         </div>
         <button id="btnRunAiTest" class="ghost">執行 AI 測試</button>
