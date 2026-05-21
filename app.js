@@ -310,7 +310,7 @@ function aiRunHealthSimulation(settings, rounds = 6) {
     noBid: 0,
     loops: 0,
     samples: [],
-    healthVersion: "AI V20"
+    healthVersion: "AI V21"
   };
   let scores = [0, 0, 0, 0, 0];
   for (let round = 0; round < rounds; round += 1) {
@@ -366,7 +366,10 @@ function aiRunHealthSimulation(settings, rounds = 6) {
   aggregate.healthScore = Math.max(45, Math.min(99, Math.round(100 - penalty / completed + Math.min(4, aggregate.blockStops / completed))));
   aggregate.avgContract = aggregate.totalContract / completed;
   aggregate.avgNapHeads = aggregate.totalNapHeads / completed;
-  aggregate.balanceNote = aggregate.madeRate > 0.68 ? "拿破崙偏強，聯合國需加強擋約" : (aggregate.madeRate < 0.35 ? "聯合國偏強，拿破崙可能過難" : "攻防分布正常");
+  aggregate.balanceNote = aggregate.madeRate > 0.68 ? "拿破崙偏強，聯合國需加強擋約" : (aggregate.madeRate < 0.45 ? "聯合國偏強，拿破崙可能過難" : (aggregate.madeRate > 0.60 ? "拿破崙略強，防守仍可加強" : "攻防分布正常"));
+  aggregate.v21AttackNote = aggregate.madeRate < 0.45
+    ? "V21 已啟用拿破崙進攻補強：落後時更敢搶頭、秘書更願意救局。"
+    : (aggregate.madeRate > 0.60 ? "拿破崙達標率略高，建議觀察聯合國擋約效率。" : "拿破崙達標率落在目標區間，攻防張力良好。");
   aggregate.suspiciousHeadGifts = (aggregate.avoidableHeadGifts || 0) + (aggregate.forcedHeadGifts || 0);
   aggregate.preventableRatio = aggregate.suspiciousHeadGifts ? (aggregate.avoidableHeadGifts || 0) / aggregate.suspiciousHeadGifts : 0;
   aggregate.reportNote = aggregate.avoidableHeadGifts <= 12
@@ -466,7 +469,8 @@ function aiHealthSummaryHtml(summary) {
     ["擋約/攔頭", `${summary.blockStops || 0}`],
     ["低成本擋約", `${summary.lowCostBlocks || 0}`],
     ["控制牌浪費警示", `${summary.controlWaste}`],
-    ["V20 判讀", summary.reportNote || "-"]
+    ["V20 送頭判讀", summary.reportNote || "-"],
+    ["V21 攻防建議", summary.v21AttackNote || "-"]
   ];
   const detail = summary.samples.filter(Boolean).slice(0, 3).map((line) => `<li>${escapeHtml(line)}</li>`).join("");
   return `
@@ -2653,6 +2657,7 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
   score += aiV18HeadGiftShieldAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV19DefenseBalanceAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV20HeadReportRiskAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
+  score += aiV21NapoleonAttackBalanceAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
 
   return score;
 }
@@ -3821,6 +3826,87 @@ function aiV20HeadReportRiskNotes(game, seat, card, ctx) {
   return notes.slice(0, 2);
 }
 
+
+function aiV21NapoleonAttackBalanceAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 10 || !card || !ctx) return 0;
+  const weight = aiClamp((difficulty - 9) / 11, 0.25, 1.35);
+  const trickLen = game.trick?.length || 0;
+  const isPoint = isHeadCard(card);
+  const isTrump = Boolean(game.trump && game.trump !== "NT" && card.suit === game.trump);
+  const isJoker = Boolean(card.joker);
+  const control = aiControlCardValue(game, seat, card, ctx);
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const currentEnemyWinning = trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam;
+  const currentAllyWinning = trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam;
+  const napBehind = ctx.myTeam === "nap" && (ctx.contractMode?.mode === "chase" || ctx.napNeeds >= Math.max(3, pointsWithCard + 2) || ctx.napUrgency > 0.56);
+  const napCritical = ctx.myTeam === "nap" && ctx.napNeeds <= Math.max(3, pointsWithCard + 2);
+  const safeEnough = ctx.actingLast || projection.holdProb >= 0.58 || projection.enemySwingProb < 0.34;
+  const legalLowLosers = (legal || []).filter((c) => !isHeadCard(c) && aiControlCardValue(game, seat, c, ctx) < 9 && (trickLen === 0 ? aiLikelyLeadWin(game, seat, c) < 0.64 : !wouldWin(game, c)));
+  let score = 0;
+
+  // V21：拿破崙方偏弱時補進攻。落後時，有把握守住的頭牌、王牌、鬼牌與秘書牌要更敢兌現。
+  if (ctx.myTeam === "nap") {
+    if (napBehind && candidateWins) {
+      score += (9 + pointsWithCard * 5 + ctx.napUrgency * 10) * weight;
+      if (isPoint) score += 6 * weight;
+      if (isTrump || isJoker || control >= 14) score += (safeEnough ? 6 : 2) * weight;
+    }
+    if (napBehind && trickLen === 0) {
+      const leadWin = aiLikelyLeadWin(game, seat, card);
+      const master = card.suit ? aiIsLikelyMaster(game, seat, card, card.suit, ctx.memory) : Boolean(isJoker || card.id === game.secretaryCardId);
+      if ((isPoint || isTrump || isJoker || master) && leadWin >= 0.66) score += (7 + ctx.napUrgency * 8) * weight;
+      if (!isPoint && !master && legalLowLosers.length >= 3 && ctx.handHeads >= 3) score -= 3 * weight;
+      if (isTrump && ctx.trumpCount >= 4 && (game.trickNo || 0) <= 4) score += 5 * weight; // 有長王牌時更會抽王牌建立節奏。
+    }
+    if (currentEnemyWinning && candidateWins && (pointsWithCard >= 1 || napBehind || napCritical)) {
+      score += (10 + pointsWithCard * 6) * weight;
+      if (projection.holdProb >= 0.55) score += 5 * weight;
+    }
+    if (currentAllyWinning && !candidateWins && isPoint) {
+      const feedSafe = ctx.actingLast || projection.enemySwingProb < 0.30 || ctx.opponentsAfter === 0;
+      if (feedSafe && (napBehind || napCritical || pointsWithCard >= 2)) score += (8 + pointsWithCard * 2) * weight;
+    }
+    if (!game.secretaryRevealed && card.id === game.secretaryCardId) {
+      const rescueWindow = napBehind || napCritical || ctx.handSize <= 4 || pointsWithCard >= 2;
+      if (rescueWindow && (candidateWins || projection.holdProb >= 0.58)) score += (18 + ctx.napUrgency * 12) * weight;
+      else if (!rescueWindow && !ctx.late) score -= 6 * weight;
+    }
+  }
+
+  // V21：防守方在拿破崙明顯落後時不再過度壓制；保留控制牌，避免把防守強度推到過高。
+  if (ctx.myTeam === "def") {
+    const napClearlyBehind = ctx.napNeeds >= Math.max(4, (ctx.remainingHeads || 0) * 0.45);
+    if (napClearlyBehind && candidateWins && pointsWithCard <= 1 && control >= 12 && !ctx.actingLast && !ctx.late) {
+      score -= (8 + control * 0.22) * weight;
+    }
+    if (napClearlyBehind && trickLen === 0 && (isJoker || isTrump) && pointsWithCard === 0 && !ctx.late) {
+      score -= 6 * weight;
+    }
+    // 真正接近成約時仍保留 V19/V20 的強防守，不削弱擋約。
+    if (ctx.napNeeds <= Math.max(3, pointsWithCard + 2) && candidateWins && currentEnemyWinning) {
+      score += (6 + pointsWithCard * 3) * weight;
+    }
+  }
+
+  return score;
+}
+
+function aiV21NapoleonAttackBalanceNotes(game, seat, card, ctx) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 16 || !card || !ctx) return [];
+  const notes = [];
+  const trickLen = game.trick?.length || 0;
+  const candidateWins = trickLen === 0 ? aiLikelyLeadWin(game, seat, card) >= 0.66 : wouldWin(game, card);
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const pointsWithCard = (ctx.pointsOnTable || 0) + (isHeadCard(card) ? 1 : 0);
+  const napBehind = ctx.myTeam === "nap" && (ctx.contractMode?.mode === "chase" || ctx.napNeeds >= Math.max(3, pointsWithCard + 2) || ctx.napUrgency > 0.56);
+  if (napBehind && candidateWins) notes.push("V21進攻補強：拿破崙方落後，優先兌現可守住的頭牌/控制牌");
+  if (!game.secretaryRevealed && card.id === game.secretaryCardId && (napBehind || pointsWithCard >= 2 || ctx.handSize <= 4)) notes.push("V21秘書救局：成敗線附近更願意公開支援");
+  if (ctx.myTeam === "def" && ctx.napNeeds >= Math.max(4, (ctx.remainingHeads || 0) * 0.45) && projection.enemySwingProb < 0.35) notes.push("V21攻防平衡：拿破崙落後時，防家避免過度耗控制牌");
+  return notes.slice(0, 2);
+}
+
 function aiExplainPlayChoice(game, seat, card) {
   const difficulty = Number(game.settings?.difficulty || 10);
   if (difficulty < 16 || !card) return null;
@@ -3852,6 +3938,7 @@ function aiExplainPlayChoice(game, seat, card) {
   parts.push(...aiV18HeadGiftShieldNotes(game, seat, card, ctx));
   parts.push(...aiV19DefenseBalanceNotes(game, seat, card, ctx));
   parts.push(...aiV20HeadReportRiskNotes(game, seat, card, ctx));
+  parts.push(...aiV21NapoleonAttackBalanceNotes(game, seat, card, ctx));
   if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號、成約差、本局學習、AI風格、長局計畫、對手模型、送頭防護與防守平衡評分後選出");
   return `選 ${cardLong(card)}：${parts.slice(0, 3).join("；")}。`;
 }
