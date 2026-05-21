@@ -40,8 +40,8 @@ async function loadFirebaseSdk() {
   serverTimestamp = dbMod.serverTimestamp;
 }
 
-const APP_VERSION = "AI V32｜統計・無障礙・錯誤回報";
-const APP_BUILD = "2026-05-21-v32";
+const APP_VERSION = "AI V33｜導覽・分享・備份";
+const APP_BUILD = "2026-05-21-v33";
 const ROOM_TTL_MS = 1000 * 60 * 60 * 24;
 const ROOM_STALE_MS = 1000 * 60 * 60 * 12;
 const $ = (id) => document.getElementById(id);
@@ -84,7 +84,8 @@ const STORAGE = {
   localStats: "napoleon.local.stats.v1",
   errorLog: "napoleon.error.log.v1",
   lastRoom: "napoleon.last.room.v1",
-  lastRoomAt: "napoleon.last.room.at.v1"
+  lastRoomAt: "napoleon.last.room.at.v1",
+  onboardingSeen: "napoleon.onboarding.seen.v1"
 };
 const THEME_OPTIONS = ["auto", "ocean", "eye-care", "e-ink", "forest", "grassland", "sakura", "twilight"];
 const THEME_PALETTE = THEME_OPTIONS.filter((theme) => theme !== "auto");
@@ -147,7 +148,9 @@ function init() {
   $("btnRunAiTest")?.addEventListener("click", runAiHealthCheck);
   $("btnRunDiagnostics")?.addEventListener("click", runDiagnostics);
   $("btnShowLocalStats")?.addEventListener("click", renderLocalStatsSummary);
+  $("btnShareStats")?.addEventListener("click", shareLocalStats);
   $("btnExportLocalData")?.addEventListener("click", exportLocalData);
+  $("btnImportLocalData")?.addEventListener("click", openImportDataDialog);
   $("btnCopyErrorReport")?.addEventListener("click", copyErrorReport);
   $("btnResetLocalData")?.addEventListener("click", resetLocalData);
   $("btnConnect").addEventListener("click", connectFirebase);
@@ -169,6 +172,13 @@ function init() {
   $("btnCloseRoomLobby")?.addEventListener("click", hostCloseRoom);
   $("btnCloseRoomGame")?.addEventListener("click", hostCloseRoom);
   $("btnStartGame").addEventListener("click", hostStartGame);
+  $("btnOnboarding")?.addEventListener("click", () => showOnboardingDialog(true));
+  $("closeOnboarding")?.addEventListener("click", () => finishOnboarding(false));
+  $("btnStartAfterGuide")?.addEventListener("click", () => finishOnboarding(false));
+  $("btnEnableHintsFromGuide")?.addEventListener("click", () => { setPlayerHintsVisible(true); finishOnboarding(false); });
+  $("closeImportData")?.addEventListener("click", () => $("importDataDialog")?.close());
+  $("btnApplyImportData")?.addEventListener("click", restoreLocalDataFromDialog);
+  $("btnPasteCurrentBackup")?.addEventListener("click", () => { const ta = $("importDataText"); if (ta) ta.value = JSON.stringify(collectLocalData(), null, 2); });
   $("btnRules").addEventListener("click", () => $("rulesDialog").showModal());
   $("closeRules").addEventListener("click", () => $("rulesDialog").close());
   $("themeSelect").addEventListener("change", (event) => applyTheme(event.target.value, true));
@@ -195,6 +205,7 @@ function init() {
   renderLocalStatsSummary();
   installErrorCapture();
   installKeyboardShortcuts();
+  maybeShowFirstRunGuide();
   if (appState.autoJoinCode) {
     window.setTimeout(() => connectFirebase(), 250);
   }
@@ -862,7 +873,7 @@ async function exportLocalData() {
 function resetLocalData() {
   const ok = window.confirm("確定要清除本機統計、偏好、上次房號與錯誤紀錄？不會刪除 Firebase 房間資料。");
   if (!ok) return;
-  for (const key of [STORAGE.localStats, STORAGE.errorLog, STORAGE.lastRoom, STORAGE.lastRoomAt, STORAGE.logVisible, STORAGE.playerHints, STORAGE.sound, STORAGE.vibration, STORAGE.theme]) {
+  for (const key of [STORAGE.localStats, STORAGE.errorLog, STORAGE.lastRoom, STORAGE.lastRoomAt, STORAGE.logVisible, STORAGE.playerHints, STORAGE.sound, STORAGE.vibration, STORAGE.theme, STORAGE.onboardingSeen]) {
     localStorage.removeItem(key);
   }
   appState.recordedRoundKeys.clear();
@@ -946,6 +957,100 @@ function cycleTheme() {
   const next = THEME_OPTIONS[(i + 1) % THEME_OPTIONS.length] || "ocean";
   applyTheme(next, true);
   toast(`主題：${$("themeSelect")?.selectedOptions?.[0]?.textContent || next}`);
+}
+
+
+function maybeShowFirstRunGuide() {
+  const seen = localStorage.getItem(STORAGE.onboardingSeen) === "1";
+  const hasStats = (loadLocalStats().games || 0) > 0;
+  if (seen || hasStats || appState.autoJoinCode) return;
+  window.setTimeout(() => showOnboardingDialog(false), 650);
+}
+
+function showOnboardingDialog(force = false) {
+  const dialog = $("onboardingDialog");
+  if (!dialog) return;
+  if (!force && localStorage.getItem(STORAGE.onboardingSeen) === "1") return;
+  try { dialog.showModal(); }
+  catch { dialog.setAttribute("open", ""); }
+}
+
+function finishOnboarding() {
+  localStorage.setItem(STORAGE.onboardingSeen, "1");
+  const dialog = $("onboardingDialog");
+  if (dialog?.open) dialog.close();
+  toast("導覽已完成");
+}
+
+function buildStatsShareText() {
+  const stats = loadLocalStats();
+  const winRate = stats.games ? Math.round((stats.wins / Math.max(1, stats.games)) * 100) : 0;
+  const napRate = stats.napGames ? Math.round((stats.napWins / Math.max(1, stats.napGames)) * 100) : 0;
+  const defRate = stats.defGames ? Math.round((stats.defWins / Math.max(1, stats.defGames)) * 100) : 0;
+  const avgHeads = stats.games ? (stats.teamHeadsTotal / Math.max(1, stats.games)).toFixed(1) : "-";
+  const avgContract = stats.games ? (stats.contractTotal / Math.max(1, stats.games)).toFixed(1) : "-";
+  const recent = (stats.recent || []).slice(0, 5).map((r, i) => `${i + 1}. ${r.mode} ${r.team} ${r.result} ${r.heads} 頭 ${r.delta >= 0 ? "+" : ""}${r.delta}`).join("\n");
+  return [
+    "🦊 拿破崙與秘書｜我的本機戰績",
+    `版本：${APP_VERSION}`,
+    `總局數：${stats.games || 0}`,
+    `勝率：${winRate}%` ,
+    `總分差：${stats.totalScoreDelta >= 0 ? "+" : ""}${stats.totalScoreDelta || 0}`,
+    `拿破崙勝率：${stats.napGames ? `${napRate}%` : "-"}`,
+    `聯合國勝率：${stats.defGames ? `${defRate}%` : "-"}`,
+    `平均頭數 / 成約：${avgHeads} / ${avgContract}`,
+    recent ? "最近戰績：\n" + recent : "最近戰績：尚無",
+    "https://fox520-sketch.github.io/fox/"
+  ].join("\n");
+}
+
+async function shareLocalStats() {
+  const text = buildStatsShareText();
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: "拿破崙與秘書戰績", text });
+      toast("已開啟分享");
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+    }
+  }
+  await copyText(text, "已複製戰績摘要");
+}
+
+function openImportDataDialog() {
+  const ta = $("importDataText");
+  if (ta) ta.value = "";
+  const dialog = $("importDataDialog");
+  if (!dialog) return;
+  try { dialog.showModal(); }
+  catch { dialog.setAttribute("open", ""); }
+}
+
+function restoreLocalDataFromDialog() {
+  const raw = $("importDataText")?.value || "";
+  if (!raw.trim()) return toast("請先貼上 JSON");
+  let data;
+  try { data = JSON.parse(raw); }
+  catch { return toast("JSON 格式錯誤"); }
+  if (!data || typeof data !== "object") return toast("資料格式不正確");
+  const settings = data.settings || {};
+  if (settings.theme && THEME_OPTIONS.includes(settings.theme)) localStorage.setItem(STORAGE.theme, settings.theme);
+  if (typeof settings.playerHints === "boolean") localStorage.setItem(STORAGE.playerHints, settings.playerHints ? "1" : "0");
+  if (typeof settings.sound === "boolean") localStorage.setItem(STORAGE.sound, settings.sound ? "1" : "0");
+  if (typeof settings.vibration === "boolean") localStorage.setItem(STORAGE.vibration, settings.vibration ? "1" : "0");
+  if (settings.playerName) localStorage.setItem(STORAGE.name, String(settings.playerName).slice(0, 12));
+  if (data.stats && typeof data.stats === "object") saveLocalStats({ ...getEmptyLocalStats(), ...data.stats });
+  if (Array.isArray(data.errors)) saveErrorLog(data.errors);
+  if (data.lastRoom) localStorage.setItem(STORAGE.lastRoom, String(data.lastRoom).slice(0, 8));
+  applyTheme(loadTheme());
+  applyPlayerHintsVisible(getPlayerHintsVisible());
+  applyFeedbackSettings();
+  renderLocalStatsSummary();
+  const name = localStorage.getItem(STORAGE.name);
+  if (name && $("playerName")) $("playerName").value = name;
+  $("importDataDialog")?.close();
+  toast("已還原本機資料");
 }
 
 async function runDiagnostics() {
@@ -1048,7 +1153,7 @@ async function createRoom() {
       createdAt: now,
       updatedAt: now,
       expiresAt: now + ROOM_TTL_MS,
-      schemaVersion: 32,
+      schemaVersion: 33,
       appBuild: APP_BUILD
     },
     lobby: {
@@ -1438,7 +1543,7 @@ async function hostCloseRoom() {
 async function hostExtendRoom() {
   if (!isHost() || !appState.roomCode || appState.offline) return;
   const expiresAt = Date.now() + ROOM_TTL_MS;
-  await update(roomRef("meta"), { updatedAt: Date.now(), expiresAt, appBuild: APP_BUILD, schemaVersion: 32 });
+  await update(roomRef("meta"), { updatedAt: Date.now(), expiresAt, appBuild: APP_BUILD, schemaVersion: 33 });
   toast("已延長房間 24 小時");
 }
 

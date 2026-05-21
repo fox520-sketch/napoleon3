@@ -42,6 +42,7 @@
         <label class="top-check" for="hintToggle"><input id="hintToggle" type="checkbox" /> 玩家提示</label>
         <label class="top-check" for="soundToggle"><input id="soundToggle" type="checkbox" /> 音效</label>
         <label class="top-check" for="vibrationToggle"><input id="vibrationToggle" type="checkbox" /> 震動</label>
+        <button id="btnOnboarding" class="ghost" type="button">新手導覽</button>
         <button id="btnRules" class="ghost">玩法摘要</button>
         <button id="btnLeave" class="ghost hidden">離開房間</button>
       </div>
@@ -144,7 +145,9 @@
         </div>
         <div class="tool-actions">
           <button id="btnShowLocalStats" class="ghost" type="button">更新統計</button>
+          <button id="btnShareStats" class="ghost" type="button">分享戰績</button>
           <button id="btnExportLocalData" class="ghost" type="button">匯出資料</button>
+          <button id="btnImportLocalData" class="ghost" type="button">還原資料</button>
           <button id="btnCopyErrorReport" class="ghost" type="button">複製錯誤回報</button>
           <button id="btnResetLocalData" class="ghost danger-ghost" type="button">重設本機資料</button>
         </div>
@@ -357,6 +360,40 @@
         <div id="log" class="log"></div>
       </aside>
     </main>
+
+
+
+    <dialog id="onboardingDialog" class="onboarding-dialog">
+      <div class="dialog-body onboarding-body">
+        <button id="closeOnboarding" class="close" type="button">×</button>
+        <p class="eyebrow">快速導覽</p>
+        <h2>第一次玩？照這 4 步開始</h2>
+        <div class="onboarding-steps">
+          <article><b>1</b><div><h3>先選模式</h3><p>單人離線可直接開始；多人請先連線 Firebase，再建立或加入房間。</p></div></article>
+          <article><b>2</b><div><h3>叫牌看「數字＋花色」</h3><p>例如 11 黑桃。花色大小依 ♣ < ♦ < ♥ < ♠；最高叫品且其他 4 家 Pass 後，叫到的人就是拿破崙。</p></div></article>
+          <article><b>3</b><div><h3>開啟玩家提示</h3><p>上方「玩家提示」會在叫牌、換底牌、選秘書與出牌時給建議；手機點灰色牌也會說明不能出的原因。</p></div></article>
+          <article><b>4</b><div><h3>結束後看回放</h3><p>本局結算可打開牌局回放，逐墩看誰吃、幾頭、哪一墩是關鍵。</p></div></article>
+        </div>
+        <div class="button-row dialog-actions">
+          <button id="btnStartAfterGuide" class="primary" type="button">知道了</button>
+          <button id="btnEnableHintsFromGuide" class="ghost" type="button">開啟玩家提示</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="importDataDialog" class="backup-dialog">
+      <div class="dialog-body backup-body">
+        <button id="closeImportData" class="close" type="button">×</button>
+        <p class="eyebrow">備份 / 還原</p>
+        <h2>貼上本機資料 JSON</h2>
+        <p class="hint">可貼上「匯出資料」複製的 JSON，還原主題、玩家提示、音效/震動、暱稱、統計與錯誤紀錄。這只會影響本機，不會改 Firebase 房間。</p>
+        <textarea id="importDataText" class="backup-textarea" spellcheck="false" placeholder="在這裡貼上 JSON"></textarea>
+        <div class="button-row dialog-actions">
+          <button id="btnApplyImportData" class="primary" type="button">還原資料</button>
+          <button id="btnPasteCurrentBackup" class="ghost" type="button">填入目前備份</button>
+        </div>
+      </div>
+    </dialog>
 
     <dialog id="rulesDialog">
       <div class="dialog-body">
