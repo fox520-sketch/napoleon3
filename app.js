@@ -40,8 +40,10 @@ async function loadFirebaseSdk() {
   serverTimestamp = dbMod.serverTimestamp;
 }
 
-const APP_VERSION = "AI V30｜多人穩定・房主工具";
-const APP_BUILD = "2026-05-21-v30";
+const APP_VERSION = "AI V32｜統計・無障礙・錯誤回報";
+const APP_BUILD = "2026-05-21-v32";
+const ROOM_TTL_MS = 1000 * 60 * 60 * 24;
+const ROOM_STALE_MS = 1000 * 60 * 60 * 12;
 const $ = (id) => document.getElementById(id);
 const SUITS = {
   S: { sym: "♠", name: "黑桃", color: "black", order: 4 },
@@ -79,6 +81,8 @@ const STORAGE = {
   playerHints: "napoleon.player.hints.v1",
   sound: "napoleon.sound.enabled.v1",
   vibration: "napoleon.vibration.enabled.v1",
+  localStats: "napoleon.local.stats.v1",
+  errorLog: "napoleon.error.log.v1",
   lastRoom: "napoleon.last.room.v1",
   lastRoomAt: "napoleon.last.room.at.v1"
 };
@@ -116,7 +120,8 @@ const appState = {
   dismissedRoundResultKey: null,
   waitingWorker: null,
   lastTurnNoticeKey: null,
-  audioContext: null
+  audioContext: null,
+  recordedRoundKeys: new Set()
 };
 
 function init() {
@@ -141,6 +146,10 @@ function init() {
   $("offlinePreset")?.addEventListener("change", () => applyOfflinePresetFromUI(true));
   $("btnRunAiTest")?.addEventListener("click", runAiHealthCheck);
   $("btnRunDiagnostics")?.addEventListener("click", runDiagnostics);
+  $("btnShowLocalStats")?.addEventListener("click", renderLocalStatsSummary);
+  $("btnExportLocalData")?.addEventListener("click", exportLocalData);
+  $("btnCopyErrorReport")?.addEventListener("click", copyErrorReport);
+  $("btnResetLocalData")?.addEventListener("click", resetLocalData);
   $("btnConnect").addEventListener("click", connectFirebase);
   $("btnCreateRoom").addEventListener("click", createRoom);
   $("btnJoinRoom").addEventListener("click", joinRoomFromInput);
@@ -153,6 +162,10 @@ function init() {
   $("btnRemoveBot").addEventListener("click", () => hostRemoveBot());
   $("btnTakeOverOfflineLobby")?.addEventListener("click", hostTakeOverOfflinePlayers);
   $("btnTakeOverOfflineGame")?.addEventListener("click", hostTakeOverOfflinePlayers);
+  $("btnExtendRoomLobby")?.addEventListener("click", hostExtendRoom);
+  $("btnExtendRoomGame")?.addEventListener("click", hostExtendRoom);
+  $("btnCopyRoomMaintenanceLobby")?.addEventListener("click", copyRoomMaintenanceSummary);
+  $("btnCopyRoomMaintenanceGame")?.addEventListener("click", copyRoomMaintenanceSummary);
   $("btnCloseRoomLobby")?.addEventListener("click", hostCloseRoom);
   $("btnCloseRoomGame")?.addEventListener("click", hostCloseRoom);
   $("btnStartGame").addEventListener("click", hostStartGame);
@@ -179,6 +192,9 @@ function init() {
   }
   renderConnectState();
   renderVersionInfo();
+  renderLocalStatsSummary();
+  installErrorCapture();
+  installKeyboardShortcuts();
   if (appState.autoJoinCode) {
     window.setTimeout(() => connectFirebase(), 250);
   }
@@ -699,19 +715,268 @@ function maybeNotifyMyTurn(game) {
   vibrate([40, 30, 40]);
 }
 
+
+function getEmptyLocalStats() {
+  return {
+    version: 1,
+    games: 0,
+    wins: 0,
+    losses: 0,
+    napGames: 0,
+    napWins: 0,
+    defGames: 0,
+    defWins: 0,
+    totalScoreDelta: 0,
+    teamHeadsTotal: 0,
+    contractTotal: 0,
+    closeGames: 0,
+    offlineGames: 0,
+    onlineGames: 0,
+    recent: [],
+    keys: []
+  };
+}
+
+function loadLocalStats() {
+  try {
+    return { ...getEmptyLocalStats(), ...(JSON.parse(localStorage.getItem(STORAGE.localStats) || "{}") || {}) };
+  } catch {
+    return getEmptyLocalStats();
+  }
+}
+
+function saveLocalStats(stats) {
+  localStorage.setItem(STORAGE.localStats, JSON.stringify(stats));
+}
+
+function deltaFromResult(result, seat) {
+  return result?.scoreDeltas?.[seat] ?? 0;
+}
+
+function recordRoundStats(key, game, result, seat, playerTeam, playerWon, delta) {
+  if (!key || appState.recordedRoundKeys.has(key)) return;
+  const stats = loadLocalStats();
+  if ((stats.keys || []).includes(key)) {
+    appState.recordedRoundKeys.add(key);
+    return;
+  }
+  const isNap = playerTeam === "nap";
+  const diff = Math.abs((result.teamHeads || 0) - (result.contract || 0));
+  stats.games += 1;
+  stats.wins += playerWon ? 1 : 0;
+  stats.losses += playerWon ? 0 : 1;
+  stats.napGames += isNap ? 1 : 0;
+  stats.napWins += isNap && playerWon ? 1 : 0;
+  stats.defGames += !isNap ? 1 : 0;
+  stats.defWins += !isNap && playerWon ? 1 : 0;
+  stats.totalScoreDelta += Number(delta || 0);
+  stats.teamHeadsTotal += Number(result.teamHeads || 0);
+  stats.contractTotal += Number(result.contract || 0);
+  stats.closeGames += diff <= 1 ? 1 : 0;
+  if (appState.offline || appState.room?.meta?.mode === "offline") stats.offlineGames += 1;
+  else stats.onlineGames += 1;
+  stats.recent = [{
+    at: Date.now(),
+    mode: appState.offline ? "單人" : "多人",
+    team: isNap ? "拿破崙軍" : "聯合國",
+    result: playerWon ? "勝" : "敗",
+    delta: Number(delta || 0),
+    heads: `${result.teamHeads}/${result.contract}`,
+    winner: result.winningTeam === "nap" ? "拿破崙軍" : "聯合國"
+  }, ...(stats.recent || [])].slice(0, 20);
+  stats.keys = [key, ...(stats.keys || [])].slice(0, 80);
+  saveLocalStats(stats);
+  appState.recordedRoundKeys.add(key);
+  renderLocalStatsSummary();
+}
+
+function renderLocalStatsSummary() {
+  const el = $("localStatsSummary");
+  if (!el) return;
+  const stats = loadLocalStats();
+  if (!stats.games) {
+    el.innerHTML = `<div class="stats-empty">尚無已完成牌局。完成一局後，這裡會自動累積本機統計。</div>`;
+    return;
+  }
+  const winRate = Math.round((stats.wins / Math.max(1, stats.games)) * 100);
+  const napRate = Math.round((stats.napWins / Math.max(1, stats.napGames || 0)) * 100) || 0;
+  const defRate = Math.round((stats.defWins / Math.max(1, stats.defGames || 0)) * 100) || 0;
+  const avgHeads = (stats.teamHeadsTotal / Math.max(1, stats.games)).toFixed(1);
+  const avgContract = (stats.contractTotal / Math.max(1, stats.games)).toFixed(1);
+  const recent = (stats.recent || []).slice(0, 3).map((r) => `<li>${escapeHtml(r.mode)}・${escapeHtml(r.team)}・${escapeHtml(r.result)}・${escapeHtml(r.heads)} 頭・${r.delta >= 0 ? "+" : ""}${r.delta}</li>`).join("");
+  el.innerHTML = `
+    <div class="stats-grid">
+      <div><span>總局數</span><b>${stats.games}</b></div>
+      <div><span>勝率</span><b>${winRate}%</b></div>
+      <div><span>總分差</span><b>${stats.totalScoreDelta >= 0 ? "+" : ""}${stats.totalScoreDelta}</b></div>
+      <div><span>接近成敗線</span><b>${stats.closeGames}</b></div>
+      <div><span>拿破崙勝率</span><b>${stats.napGames ? `${napRate}%` : "-"}</b></div>
+      <div><span>聯合國勝率</span><b>${stats.defGames ? `${defRate}%` : "-"}</b></div>
+      <div><span>平均頭數</span><b>${avgHeads}</b></div>
+      <div><span>平均成約</span><b>${avgContract}</b></div>
+    </div>
+    ${recent ? `<ul class="stats-recent">${recent}</ul>` : ""}
+  `;
+}
+
+function collectLocalData() {
+  return {
+    appVersion: APP_VERSION,
+    appBuild: APP_BUILD,
+    exportedAt: new Date().toISOString(),
+    settings: {
+      theme: localStorage.getItem(STORAGE.theme) || "ocean",
+      playerHints: getPlayerHintsVisible(),
+      sound: isSoundEnabled(),
+      vibration: isVibrationEnabled(),
+      playerName: localStorage.getItem(STORAGE.name) || ""
+    },
+    stats: loadLocalStats(),
+    lastRoom: localStorage.getItem(STORAGE.lastRoom) || "",
+    errors: loadErrorLog()
+  };
+}
+
+async function copyText(text, successMessage = "已複製") {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(successMessage);
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+    toast(successMessage);
+  }
+}
+
+async function exportLocalData() {
+  await copyText(JSON.stringify(collectLocalData(), null, 2), "已複製本機資料 JSON");
+}
+
+function resetLocalData() {
+  const ok = window.confirm("確定要清除本機統計、偏好、上次房號與錯誤紀錄？不會刪除 Firebase 房間資料。");
+  if (!ok) return;
+  for (const key of [STORAGE.localStats, STORAGE.errorLog, STORAGE.lastRoom, STORAGE.lastRoomAt, STORAGE.logVisible, STORAGE.playerHints, STORAGE.sound, STORAGE.vibration, STORAGE.theme]) {
+    localStorage.removeItem(key);
+  }
+  appState.recordedRoundKeys.clear();
+  applyPlayerHintsVisible(false);
+  applyFeedbackSettings();
+  renderLocalStatsSummary();
+  toast("已重設本機資料");
+}
+
+function loadErrorLog() {
+  try { return JSON.parse(localStorage.getItem(STORAGE.errorLog) || "[]") || []; }
+  catch { return []; }
+}
+
+function saveErrorLog(list) {
+  localStorage.setItem(STORAGE.errorLog, JSON.stringify((list || []).slice(0, 12)));
+}
+
+function logClientError(message, detail = "") {
+  const entry = {
+    at: new Date().toISOString(),
+    version: APP_VERSION,
+    build: APP_BUILD,
+    message: String(message || "未知錯誤").slice(0, 220),
+    detail: String(detail || "").slice(0, 600),
+    url: location.href,
+    userAgent: navigator.userAgent
+  };
+  saveErrorLog([entry, ...loadErrorLog()]);
+}
+
+function installErrorCapture() {
+  if (window.__napoleonErrorCaptureInstalled) return;
+  window.__napoleonErrorCaptureInstalled = true;
+  window.addEventListener("error", (event) => logClientError(event.message, `${event.filename || ""}:${event.lineno || 0}:${event.colno || 0}`));
+  window.addEventListener("unhandledrejection", (event) => logClientError("Unhandled promise rejection", event.reason?.stack || event.reason?.message || event.reason));
+}
+
+async function copyErrorReport() {
+  const data = collectLocalData();
+  const room = appState.room;
+  const text = [
+    "拿破崙與秘書錯誤回報",
+    `版本：${APP_VERSION}（${APP_BUILD}）`,
+    `網址：${location.href}`,
+    `瀏覽器：${navigator.userAgent}`,
+    `Firebase：${appState.connected ? "已連線" : "未連線"}`,
+    `房間：${appState.roomCode || "無"}／${room?.meta?.status || "無"}`,
+    `統計局數：${data.stats.games || 0}`,
+    "最近錯誤：",
+    ...(data.errors.length ? data.errors.map((e, i) => `${i + 1}. ${e.at} ${e.message} ${e.detail || ""}`) : ["無紀錄"])
+  ].join("\n");
+  await copyText(text, "已複製錯誤回報");
+}
+
+function installKeyboardShortcuts() {
+  if (window.__napoleonShortcutsInstalled) return;
+  window.__napoleonShortcutsInstalled = true;
+  window.addEventListener("keydown", (event) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const tag = String(event.target?.tagName || "").toLowerCase();
+    if (["input", "select", "textarea", "button"].includes(tag)) return;
+    const key = event.key.toLowerCase();
+    if (key === "h") {
+      const next = !getPlayerHintsVisible();
+      setPlayerHintsVisible(next);
+      toast(next ? "已開啟玩家提示" : "已關閉玩家提示");
+    } else if (key === "l") {
+      toggleLogVisibility();
+    } else if (key === "r" && appState.room?.game?.phase === PHASE.ROUND_END) {
+      openReplayDialog(appState.room.game);
+    } else if (key === "t") {
+      cycleTheme();
+    }
+  });
+}
+
+function cycleTheme() {
+  const current = localStorage.getItem(STORAGE.theme) || "ocean";
+  const i = THEME_OPTIONS.indexOf(current);
+  const next = THEME_OPTIONS[(i + 1) % THEME_OPTIONS.length] || "ocean";
+  applyTheme(next, true);
+  toast(`主題：${$("themeSelect")?.selectedOptions?.[0]?.textContent || next}`);
+}
+
 async function runDiagnostics() {
   const el = $("diagnosticStatus");
   if (!el) return;
   const checks = [];
   const add = (name, ok, detail) => checks.push({ name, ok, detail });
+  let cacheList = "無法讀取";
+  if ("caches" in window) {
+    try {
+      const keys = await caches.keys();
+      cacheList = keys.length ? keys.join("、") : "尚無快取";
+    } catch {
+      cacheList = "讀取失敗";
+    }
+  }
+  const maintenance = currentRoomMaintenanceStatus();
   add("目前版本", true, `${APP_VERSION}（${APP_BUILD}）`);
   add("Service Worker", "serviceWorker" in navigator, "serviceWorker" in navigator ? "瀏覽器支援" : "瀏覽器不支援");
   add("PWA 安裝資訊", Boolean(document.querySelector('link[rel="manifest"]')), "manifest.webmanifest 已掛載");
-  add("快取 API", "caches" in window, "caches" in window ? "可使用離線快取" : "不支援 Cache API");
+  add("快取 API", "caches" in window, "caches" in window ? `可使用離線快取；目前快取：${cacheList}` : "不支援 Cache API");
   add("Firebase 狀態", appState.connected, appState.connected ? `已連線，uid ${String(appState.firebaseUid || "").slice(0, 8)}…` : "尚未連線，多人前請先連線 Firebase");
   add("房間狀態", Boolean(appState.roomCode), appState.roomCode ? `${appState.roomCode}・${appState.room?.meta?.status || "未訂閱"}` : "目前未在房間內");
-  add("房主工具", true, isHost() ? "目前是房主，可接管離線玩家或關閉房間" : "非房主，只能操作自己的座位");
+  add("房間維護", !maintenance.warn, maintenance.detail);
+  add("Firebase 規則", true, "已附 database.rules.json 與 database.rules.secure.example.json；公開版請優先使用建議規則並定期清理舊房間");
+  add("房主工具", true, isHost() ? "目前是房主，可接管離線玩家、延長或關閉房間" : "非房主，只能操作自己的座位");
   add("本機儲存", (() => { try { localStorage.setItem("napoleon.diag", "1"); localStorage.removeItem("napoleon.diag"); return true; } catch { return false; } })(), "用於記住主題、提示、上次房號與偏好");
+  const stats = loadLocalStats();
+  add("本機統計", true, stats.games ? `${stats.games} 局，勝率 ${Math.round((stats.wins / Math.max(1, stats.games)) * 100)}%` : "尚無完成牌局");
+  add("錯誤回報", true, `${loadErrorLog().length} 筆本機錯誤紀錄`);
+  add("無障礙/快捷鍵", true, "支援鍵盤 H/L/R/T；焦點樣式已加強；主要狀態區使用 aria-live");
   add("音效/震動", true, `${isSoundEnabled() ? "音效開" : "音效關"}，${isVibrationEnabled() ? "震動開" : "震動關"}`);
   const html = checks.map((item) => `<div class="diag-row ${item.ok ? "ok" : "warn"}"><b>${item.ok ? "✓" : "!"} ${escapeHtml(item.name)}</b><span>${escapeHtml(item.detail)}</span></div>`).join("");
   el.innerHTML = `<div class="diag-grid">${html}</div>`;
@@ -781,7 +1046,10 @@ async function createRoom() {
       hostUid: appState.uid,
       status: "lobby",
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      expiresAt: now + ROOM_TTL_MS,
+      schemaVersion: 32,
+      appBuild: APP_BUILD
     },
     lobby: {
       dealer: 0,
@@ -826,6 +1094,8 @@ async function joinRoom(code) {
   const snap = await get(roomPath);
   if (!snap.exists()) return toast("找不到房間");
   const room = snap.val();
+  const expired = room.meta?.expiresAt && Date.now() > Number(room.meta.expiresAt);
+  if (expired) toast("這個房間已超過建議清理時間，仍可嘗試加入；建議請房主延長或重開房間。");
   if (room.meta?.status !== "lobby") {
     const gamePlayer = room.game?.players?.find((p) => p?.uid === appState.uid);
     const lobbySeat = Object.values(room.lobby?.seats || {}).find((seat) => seat?.uid === appState.uid);
@@ -1041,17 +1311,28 @@ function buildRoomStatusHtml(room) {
   const offlineHumans = humans.filter((seat) => seat?.online === false);
   const hostSeat = values.find((seat) => seat?.uid === room.meta?.hostUid);
   const updated = room.meta?.updatedAt ? timeAgo(room.meta.updatedAt) : "剛剛";
+  const created = room.meta?.createdAt ? timeAgo(room.meta.createdAt) : "未知";
+  const expiresAt = Number(room.meta?.expiresAt || 0);
+  const expires = expiresAt ? timeUntil(expiresAt) : "未設定";
+  const stale = room.meta?.createdAt && Date.now() - Number(room.meta.createdAt) > ROOM_STALE_MS;
+  const expired = expiresAt && Date.now() > expiresAt;
   const state = room.meta?.status === "lobby" ? "大廳" : "遊戲中";
   const hostName = hostSeat?.name || "房主";
-  const warning = offlineHumans.length
-    ? `<span class="room-warning">${offlineHumans.length} 位真人離線，可由房主改電腦接手。</span>`
-    : `<span class="room-ok">所有真人在線。</span>`;
+  const warnings = [];
+  if (offlineHumans.length) warnings.push(`${offlineHumans.length} 位真人離線，可由房主改電腦接手。`);
+  if (expired) warnings.push("房間已超過建議保留時間，公開版建議關閉或重開房間。");
+  else if (stale) warnings.push("房間已超過 12 小時，建議結束後關閉，或由房主延長 24 小時。");
+  const warning = warnings.length
+    ? `<span class="room-warning">${escapeHtml(warnings.join(" "))}</span>`
+    : `<span class="room-ok">所有真人在線；房間維護狀態正常。</span>`;
   return `
     <div class="room-status-grid">
       <span><b>${escapeHtml(state)}</b><small>房間狀態</small></span>
       <span><b>${escapeHtml(hostName)}</b><small>房主</small></span>
       <span><b>${humans.length} 真人 / ${bots.length} 電腦</b><small>座位</small></span>
       <span><b>${escapeHtml(updated)}</b><small>最後同步</small></span>
+      <span><b>${escapeHtml(created)}</b><small>建立時間</small></span>
+      <span><b>${escapeHtml(expires)}</b><small>建議清理</small></span>
     </div>
     ${warning}
   `;
@@ -1067,6 +1348,10 @@ function renderHostTools() {
       btn.disabled = !host || !hasRoom || !hasOffline;
       btn.textContent = hasOffline ? `離線玩家改電腦（${hasOffline}）` : "離線玩家改電腦";
     }
+  }
+  for (const id of ["btnExtendRoomLobby", "btnExtendRoomGame", "btnCopyRoomMaintenanceLobby", "btnCopyRoomMaintenanceGame"]) {
+    const btn = $(id);
+    if (btn) btn.disabled = !host || !hasRoom;
   }
   const gameTools = $("gameHostTools");
   if (gameTools) gameTools.classList.toggle("hidden", !host || !hasRoom);
@@ -1088,6 +1373,28 @@ function timeAgo(value) {
   const hr = Math.floor(min / 60);
   if (hr < 24) return `${hr} 小時前`;
   return `${Math.floor(hr / 24)} 天前`;
+}
+
+function timeUntil(value) {
+  let ms = Number(value);
+  if (!Number.isFinite(ms) || !ms) return "未設定";
+  if (ms < 1000000000000) ms *= 1000;
+  const diff = ms - Date.now();
+  const abs = Math.abs(diff);
+  const min = Math.ceil(abs / 60000);
+  const label = min < 60 ? `${min} 分` : (min < 1440 ? `${Math.ceil(min / 60)} 小時` : `${Math.ceil(min / 1440)} 天`);
+  return diff >= 0 ? `${label}後` : `已超過 ${label}`;
+}
+
+function currentRoomMaintenanceStatus() {
+  const room = appState.room;
+  if (!room || appState.offline) return { warn: false, detail: "未連線房間；單人離線不需要 Firebase 房間清理" };
+  const createdAt = Number(room.meta?.createdAt || 0);
+  const expiresAt = Number(room.meta?.expiresAt || 0);
+  const ageMs = createdAt ? Date.now() - createdAt : 0;
+  if (expiresAt && Date.now() > expiresAt) return { warn: true, detail: `房間已到建議清理時間：${timeUntil(expiresAt)}。房主可關閉房間或延長 24 小時。` };
+  if (ageMs > ROOM_STALE_MS) return { warn: true, detail: `房間已建立 ${timeAgo(createdAt)}，建議結束後關閉；若還要玩可由房主延長。` };
+  return { warn: false, detail: expiresAt ? `房間維護正常，建議清理時間：${timeUntil(expiresAt)}` : "房間未設定清理時間；新版建立房間會自動設定 24 小時" };
 }
 
 async function hostTakeOverOfflinePlayers() {
@@ -1126,6 +1433,35 @@ async function hostCloseRoom() {
   await remove(ref(appState.db, `rooms/${code}`));
   toast("房間已關閉");
   leaveRoom(false);
+}
+
+async function hostExtendRoom() {
+  if (!isHost() || !appState.roomCode || appState.offline) return;
+  const expiresAt = Date.now() + ROOM_TTL_MS;
+  await update(roomRef("meta"), { updatedAt: Date.now(), expiresAt, appBuild: APP_BUILD, schemaVersion: 32 });
+  toast("已延長房間 24 小時");
+}
+
+async function copyRoomMaintenanceSummary() {
+  const room = appState.room;
+  if (!room || appState.offline) return toast("目前沒有線上房間資訊");
+  const code = room.meta?.code || appState.roomCode || "未知";
+  const status = currentRoomMaintenanceStatus();
+  const text = [
+    `房號：${code}`,
+    `狀態：${room.meta?.status || "未知"}`,
+    `版本：${APP_VERSION}（${APP_BUILD}）`,
+    `建立：${room.meta?.createdAt ? timeAgo(room.meta.createdAt) : "未知"}`,
+    `最後同步：${room.meta?.updatedAt ? timeAgo(room.meta.updatedAt) : "未知"}`,
+    `建議清理：${room.meta?.expiresAt ? timeUntil(room.meta.expiresAt) : "未設定"}`,
+    `維護判斷：${status.detail}`
+  ].join("\n");
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("已複製房間維護摘要");
+  } catch {
+    toast("無法複製，請改用系統測試工具查看");
+  }
 }
 
 function defaultSettings() {
@@ -1220,6 +1556,7 @@ async function hostStartGame() {
   await update(roomRef(), {
     "meta/status": "game",
     "meta/updatedAt": Date.now(),
+    "meta/expiresAt": Date.now() + ROOM_TTL_MS,
     game
   });
 }
@@ -1250,6 +1587,7 @@ async function hostNextRound() {
     "lobby/dealer": nextDealer,
     "meta/status": "game",
     "meta/updatedAt": Date.now(),
+    "meta/expiresAt": Date.now() + ROOM_TTL_MS,
     game
   });
 }
@@ -5454,6 +5792,7 @@ function renderRoundResultAnimation(game) {
 
   const playerTeam = teamOf(game, seat);
   const playerWon = result.winningTeam === playerTeam;
+  recordRoundStats(key, game, result, seat, playerTeam, playerWon, deltaFromResult(result, seat));
   if (appState.currentRoundResultKey !== key) {
     playSfx(playerWon ? "win" : "lose");
     vibrate(playerWon ? [35, 30, 35, 30, 70] : [120]);

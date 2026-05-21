@@ -1814,3 +1814,89 @@ body[data-theme="twilight"] .danger-ghost { color: #ffbdca; border-color: rgba(2
   .host-tools .button-row { align-items: stretch; flex-direction: column; }
   .host-tools button { width: 100%; }
 }
+
+/* V32: local stats, accessibility and maintenance polish */
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  z-index: 100;
+  padding: 0.65rem 0.9rem;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--primary);
+  box-shadow: var(--shadow);
+  transition: top 0.15s ease;
+}
+.skip-link:focus { top: 12px; }
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(255, 214, 102, 0.95);
+  outline-offset: 3px;
+}
+.tool-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  justify-content: flex-end;
+  align-items: center;
+}
+.stats-card { align-items: stretch; }
+.stats-summary {
+  margin-top: 0.45rem;
+  display: grid;
+  gap: 0.65rem;
+}
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+.stats-grid div {
+  padding: 0.72rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid var(--line);
+}
+.stats-grid span {
+  display: block;
+  margin-bottom: 0.2rem;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+.stats-grid b { font-size: 1.12rem; }
+.stats-recent {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.stats-empty {
+  color: var(--muted);
+  padding: 0.7rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.52);
+  border: 1px solid var(--line);
+}
+.accessibility-card { padding-block: 0.85rem; }
+.accessibility-card b { color: var(--primary); }
+body[data-theme="twilight"] .stats-grid div,
+body[data-theme="twilight"] .stats-empty {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(196, 205, 236, 0.18);
+}
+body[data-theme="twilight"] .stats-recent,
+body[data-theme="twilight"] .stats-grid span { color: #d3ddfb; }
+body[data-theme="twilight"] .accessibility-card b { color: #fff0c2; }
+@media (max-width: 720px) {
+  .tool-actions { justify-content: stretch; }
+  .tool-actions button { flex: 1 1 140px; }
+  .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 420px) {
+  .stats-grid { grid-template-columns: 1fr; }
+}

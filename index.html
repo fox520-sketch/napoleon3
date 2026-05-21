@@ -14,6 +14,7 @@
 </head>
 <body>
   <div id="app">
+    <a class="skip-link" href="#connectView">跳到主要內容</a>
     <a class="site-home-link" href="https://fox520-sketch.github.io/fox/" target="_blank" rel="noopener" aria-label="前往狐狸網路遊戲之家">
       <span class="site-home-icon" aria-hidden="true">🦊</span>
       <span>狐狸網路遊戲之家</span>
@@ -135,6 +136,27 @@
         <button id="btnRunDiagnostics" class="ghost">執行系統測試</button>
       </div>
 
+      <div class="tool-card stats-card">
+        <div>
+          <h3>本機統計與維護</h3>
+          <p class="hint">只記錄在這台裝置，用來追蹤單人與多人局勝敗、分數、拿破崙/聯合國表現，也可匯出設定和錯誤回報。</p>
+          <div id="localStatsSummary" class="stats-summary" aria-live="polite">尚無本機統計。</div>
+        </div>
+        <div class="tool-actions">
+          <button id="btnShowLocalStats" class="ghost" type="button">更新統計</button>
+          <button id="btnExportLocalData" class="ghost" type="button">匯出資料</button>
+          <button id="btnCopyErrorReport" class="ghost" type="button">複製錯誤回報</button>
+          <button id="btnResetLocalData" class="ghost danger-ghost" type="button">重設本機資料</button>
+        </div>
+      </div>
+
+      <div class="tool-card accessibility-card">
+        <div>
+          <h3>操作提示</h3>
+          <p class="hint">鍵盤快捷鍵：<b>H</b> 玩家提示、<b>L</b> 牌局紀錄、<b>T</b> 主題切換、<b>R</b> 結算後開啟回放。手機可點灰色牌查看不能出的原因。</p>
+        </div>
+      </div>
+
       <h3 class="section-title">多人線上</h3>
 
       <div class="grid two">
@@ -193,6 +215,8 @@
             <p class="hint compact">朋友斷線時，可把離線真人座位交給電腦接手；公開測試結束可關閉房間。</p>
             <div class="button-row">
               <button id="btnTakeOverOfflineLobby" class="ghost" type="button">離線玩家改電腦</button>
+              <button id="btnExtendRoomLobby" class="ghost" type="button">延長 24 小時</button>
+              <button id="btnCopyRoomMaintenanceLobby" class="ghost" type="button">複製維護摘要</button>
               <button id="btnCloseRoomLobby" class="ghost danger-ghost" type="button">關閉房間</button>
             </div>
           </div>
