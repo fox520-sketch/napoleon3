@@ -3510,6 +3510,88 @@ function aiV16OpponentModelNotes(game, seat, card, ctx) {
   return notes.slice(0, 2);
 }
 
+
+function aiV18HeadGiftShieldAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 8 || !card || !ctx) return 0;
+  const weight = aiClamp((difficulty - 7) / 13, 0, 1.35);
+  const trickLen = game.trick?.length || 0;
+  const isPoint = isHeadCard(card);
+  const isControl = aiControlCardValue(game, seat, card, ctx) >= 14;
+  const currentEnemyWinning = trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam;
+  const currentAllyWinning = trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam;
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const leadSuit = ctx.leadSuit || (card.joker ? null : card.suit);
+  const lowDiscards = (legal || []).filter((c) => !isHeadCard(c) && aiControlCardValue(game, seat, c, ctx) < 10);
+  const safeLowDiscards = lowDiscards.filter((c) => {
+    if (trickLen === 0) return aiLikelyLeadWin(game, seat, c) < 0.5;
+    return !wouldWin(game, c);
+  });
+  const winningCards = (legal || []).filter((c) => trickLen === 0 ? aiLikelyLeadWin(game, seat, c) >= 0.7 : wouldWin(game, c));
+  const cheaperWinner = winningCards
+    .filter((c) => c.id !== card.id && cardPlayValue(c, game) + 3 < cardPlayValue(card, game))
+    .sort((a, b) => cardPlayValue(a, game) - cardPlayValue(b, game))[0] || null;
+  const critical = pointsWithCard >= 2 || ctx.handSize <= 3 || ctx.napNeeds <= Math.max(2, pointsWithCard + 1) || ctx.contractMode?.mode === "block" || ctx.contractMode?.mode === "chase";
+  const forcedPoint = isPoint && safeLowDiscards.length === 0 && !(legal || []).some((c) => !isHeadCard(c));
+  let score = 0;
+
+  // V18: 重點是降低「可疑送頭」。對手吃墩時，除非能吃回來或被迫跟頭，否則不要把頭牌丟出去。
+  if (isPoint && currentEnemyWinning && !candidateWins) {
+    score -= (forcedPoint ? 7 : 18) * weight;
+    if (safeLowDiscards.length) score -= 8 * weight;
+  }
+
+  // 領出或墊出頭牌前，先看後手敵方切牌 / 反吃壓力。
+  if (isPoint && !ctx.actingLast && !candidateWins) {
+    const pressure = projection.enemyCutPressure + projection.enemySwingProb;
+    if (pressure > 0.34) score -= (8 + pressure * 11) * weight;
+  }
+  if (isPoint && trickLen === 0 && projection.enemyCutPressure > 0.35 && !aiIsLikelyMaster(game, seat, card, leadSuit, ctx.memory)) {
+    score -= (7 + projection.enemyCutPressure * 10) * weight;
+  }
+
+  // 隊友吃墩時可以餵頭，但只有在後手安全或自己是最後一手時才明顯加分。
+  if (isPoint && currentAllyWinning && !candidateWins) {
+    if (ctx.actingLast || projection.enemySwingProb < 0.28) score += (9 + pointsWithCard * 2) * weight;
+    else score -= (5 + projection.enemySwingProb * 8) * weight;
+  }
+
+  // 不要為了小墩浪費控制牌；能低成本吃就用低成本吃。
+  if (candidateWins && cheaperWinner && !critical) {
+    const overpay = cardPlayValue(card, game) - cardPlayValue(cheaperWinner, game);
+    score -= aiClamp(overpay / 3.5, 0, 10) * weight;
+    if (isControl) score -= 7 * weight;
+  }
+  if (isControl && candidateWins && pointsWithCard <= 1 && !critical && !ctx.actingLast) score -= 8 * weight;
+
+  // 真的到了保約/擋約關鍵線，就不要過度保守；該吃的多頭墩要吃。
+  if (critical && candidateWins && pointsWithCard > 0) score += (8 + pointsWithCard * 4) * weight;
+  if (critical && currentEnemyWinning && candidateWins) score += (7 + pointsWithCard * 4) * weight;
+
+  // 有安全低牌可脫手時，非關鍵情境下偏向先保留頭牌。
+  if (isPoint && safeLowDiscards.length && !critical && !candidateWins) score -= 6 * weight;
+
+  return score;
+}
+
+function aiV18HeadGiftShieldNotes(game, seat, card, ctx) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 16 || !card || !ctx) return [];
+  const notes = [];
+  const trickLen = game.trick?.length || 0;
+  const isPoint = isHeadCard(card);
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const candidateWins = trickLen === 0 ? aiLikelyLeadWin(game, seat, card) >= 0.72 : wouldWin(game, card);
+  const currentEnemyWinning = trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam;
+  const currentAllyWinning = trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam;
+
+  if (isPoint && currentEnemyWinning && !candidateWins) notes.push("送頭防護：對手吃墩時避免無謂丟頭牌");
+  if (isPoint && currentAllyWinning && !candidateWins && (ctx.actingLast || projection.enemySwingProb < 0.28)) notes.push("送頭防護：隊友吃墩且後手安全，允許餵頭");
+  if (isPoint && projection.enemyCutPressure > 0.35 && !ctx.actingLast) notes.push("送頭防護：後手切牌壓力偏高，保留頭牌");
+  if (aiControlCardValue(game, seat, card, ctx) >= 14 && !ctx.late && (ctx.pointsOnTable || 0) <= 1) notes.push("送頭防護：非關鍵墩保留控制牌");
+  return notes.slice(0, 2);
+}
+
 function aiExplainPlayChoice(game, seat, card) {
   const difficulty = Number(game.settings?.difficulty || 10);
   if (difficulty < 16 || !card) return null;
