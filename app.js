@@ -315,7 +315,7 @@ function aiRunHealthSimulation(settings, rounds = 6) {
     samples: [],
     swingRounds: 0,
     closeRounds: 0,
-    healthVersion: "AI V23"
+    healthVersion: "AI V24"
   };
   let scores = [0, 0, 0, 0, 0];
   for (let round = 0; round < rounds; round += 1) {
@@ -383,9 +383,9 @@ function aiRunHealthSimulation(settings, rounds = 6) {
   const balanceScorePenalty = balanceGap * (aggregate.closeRate >= 0.35 ? 10 : 16);
   aggregate.healthScore = Math.max(45, Math.min(99, Math.round(100 - penalty / completed - balanceScorePenalty + Math.min(4, aggregate.blockStops / completed))));
   aggregate.confidenceLabel = rounds >= 30 ? "高信度" : (rounds >= 18 ? "穩定" : (rounds >= 12 ? "標準" : "快速"));
-  aggregate.balanceNote = aiV23BalanceNote(aggregate.madeRate, targetRange, aggregate);
-  aggregate.attackDefenseNote = aiV23AttackDefenseNote(aggregate, targetRange);
-  aggregate.autoSuggestion = aiV23TuningSuggestion(aggregate, targetRange);
+  aggregate.balanceNote = aiV24BalanceNote(aggregate.madeRate, targetRange, aggregate);
+  aggregate.attackDefenseNote = aiV24AttackDefenseNote(aggregate, targetRange);
+  aggregate.autoSuggestion = aiV24TuningSuggestion(aggregate, targetRange);
   aggregate.suspiciousHeadGifts = (aggregate.avoidableHeadGifts || 0) + (aggregate.forcedHeadGifts || 0);
   aggregate.preventableRatio = aggregate.suspiciousHeadGifts ? (aggregate.avoidableHeadGifts || 0) / aggregate.suspiciousHeadGifts : 0;
   aggregate.reportNote = aggregate.avoidableHeadGifts <= 12
@@ -425,7 +425,7 @@ function aiV22TuningSuggestion(summary, target) {
 }
 
 
-function aiV23BalanceNote(madeRate, target, summary = {}) {
+function aiV24BalanceNote(madeRate, target, summary = {}) {
   const diff = (summary.avgNapHeads || 0) - (summary.avgContract || 0);
   if (madeRate < target.low - 0.08) return "聯合國明顯偏強，拿破崙需要更多主動進攻與秘書救局";
   if (madeRate < target.low) return diff >= -1.4 ? "聯合國略強，拿破崙多數局只差一兩頭" : "聯合國略強，拿破崙進攻窗口不足";
@@ -434,25 +434,25 @@ function aiV23BalanceNote(madeRate, target, summary = {}) {
   return (summary.closeRate || 0) >= 0.35 ? "攻防分布正常，且多數局接近成敗線" : "攻防分布正常";
 }
 
-function aiV23AttackDefenseNote(summary, target) {
+function aiV24AttackDefenseNote(summary, target) {
   const madeRate = summary.madeRate || 0;
   const diff = (summary.avgNapHeads || 0) - (summary.avgContract || 0);
   if (madeRate < target.low) {
     return diff >= -1.4
-      ? "拿破崙只偏難一點：V23 只在差 1–2 頭時提高進攻與秘書救局。"
-      : "拿破崙偏難：V23 會提高中後盤追頭與控制牌兌現。";
+      ? "拿破崙只偏難一點：V24 會更主動搶頭、抽王牌並提高秘書救局。"
+      : "拿破崙偏難：V24 會提高拿破崙中後盤追頭、控制牌兌現與抽王牌權重。";
   }
-  if (madeRate > target.high) return "拿破崙偏強：V23 保留聯合國關鍵擋約，不再增加進攻補強。";
-  return "攻防落在目標區間：V23 維持小幅平衡校正。";
+  if (madeRate > target.high) return "拿破崙偏強：V24 已保留聯合國關鍵擋約，避免拿破崙過強。";
+  return "攻防落在目標區間：V24 維持拿破崙主動進攻與聯合國關鍵擋約平衡。";
 }
 
-function aiV23TuningSuggestion(summary, target) {
+function aiV24TuningSuggestion(summary, target) {
   const madeRate = summary.madeRate || 0;
   const closeRate = summary.closeRate || 0;
   const safeFeeds = summary.safeFeeds || 0;
   const rounds = Math.max(1, summary.completed || summary.rounds || 1);
   if (madeRate < target.low) {
-    if (closeRate >= 0.35) return "拿破崙常差一點，建議維持 V23 微調：提高秘書救局，降低非關鍵聯合國餵頭。";
+    if (closeRate >= 0.35) return "拿破崙常差一點，V24 已提高拿破崙追頭、王牌控制與秘書救局權重。";
     return "拿破崙偏難且接近局不多，建議提高拿破崙搶頭與王牌抽牌權重。";
   }
   if (madeRate > target.high) return "拿破崙偏強，建議提高聯合國關鍵墩低成本擋約與後手風險判斷。";
@@ -2746,6 +2746,7 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
   score += aiV21NapoleonAttackBalanceAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV22AdaptiveBalanceAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV23MicroBalanceAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
+  score += aiV24NapoleonCommanderAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
 
   return score;
 }
@@ -4118,6 +4119,96 @@ function aiV23MicroBalanceNotes(game, seat, card, ctx) {
   return notes.slice(0, 2);
 }
 
+
+function aiV24NapoleonCommanderAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  const weight = aiClamp((difficulty - 7) / 13, 0, 1.35);
+  if (!weight || !card || !ctx) return 0;
+  const trickLen = game.trick?.length || 0;
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const isPoint = isHeadCard(card);
+  const isTrump = Boolean(game.trump && game.trump !== "NT" && card.suit === game.trump);
+  const isJoker = Boolean(card.joker);
+  const isControl = aiControlCardValue(game, seat, card, ctx) >= 12 || isJoker;
+  const isNapoleon = seat === game.napoleon;
+  const isKnownSecretary = game.secretaryRevealed && seat === game.secretaryOwner;
+  const isSecretCard = !game.secretaryRevealed && card.id === game.secretaryCardId;
+  const remainingHeads = Math.max(1, ctx.remainingHeads || 1);
+  const napNeeds = Math.max(0, ctx.napNeeds || 0);
+  const nearLine = napNeeds <= Math.max(4, Math.ceil(remainingHeads * 0.4));
+  const chaseMode = napNeeds >= Math.max(2, pointsWithCard + 1) && napNeeds <= Math.max(7, Math.ceil(remainingHeads * 0.68));
+  const desperate = napNeeds > Math.max(4, remainingHeads * 0.58);
+  const currentEnemyWinning = trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam;
+  const currentAllyWinning = trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam;
+  const holdGood = projection.holdProb >= 0.58 || ctx.actingLast;
+  let score = 0;
+
+  if (ctx.myTeam === "nap") {
+    // V24：拿破崙軍不再只被動保牌。差 1–3 頭或中盤落後時，要主動收可守住的頭。
+    if ((nearLine || chaseMode || desperate) && (candidateWins || (trickLen === 0 && projection.holdProb >= 0.56))) {
+      if (pointsWithCard > 0) score += (8.5 + pointsWithCard * 4.2 + (nearLine ? 4 : 0) + (desperate ? 3 : 0));
+      if (isControl) score += (4.5 + (nearLine ? 3 : 0));
+      if (isNapoleon && isTrump && projection.enemyCutPressure < 0.5) score += 3.8;
+    }
+
+    // V24：目前對手吃墩時，拿破崙/秘書更敢用最低成本牌搶回來，避免一墩一墩被防家壓死。
+    if (currentEnemyWinning && candidateWins) {
+      score += (7.5 + pointsWithCard * 3.4 + (nearLine ? 4.5 : 0));
+      if (isNapoleon || isKnownSecretary) score += 2.5;
+    }
+
+    // V24：盟友已經吃穩時，拿破崙軍要更會餵頭；但仍看後手風險。
+    if (currentAllyWinning && isPoint && !candidateWins && (ctx.actingLast || projection.enemySwingProb < 0.34)) {
+      score += (6.2 + pointsWithCard * 1.8 + (nearLine ? 2.8 : 0));
+    }
+
+    // V24：暗秘書不能死藏。成敗線附近、殘局、多頭墩或拿破崙快失敗時，提高曝光救局權重。
+    if (isSecretCard) {
+      const rescueWindow = nearLine || chaseMode || desperate || ctx.late || ctx.handSize <= 4 || pointsWithCard >= 2;
+      if (rescueWindow && (candidateWins || holdGood || currentAllyWinning)) score += (20 + pointsWithCard * 4 + (desperate ? 5 : 0));
+      else if (!rescueWindow && (game.trickNo || 0) <= 4) score -= 7;
+    }
+
+    // V24：拿破崙首攻要更有計畫。需要追頭時，可用中小王牌抽防家王牌；安全 master 頭牌要敢兌現。
+    if (isNapoleon && trickLen === 0) {
+      const master = card.suit ? aiIsLikelyMaster(game, seat, card, card.suit, ctx.memory) : (isJoker || isSecretCard);
+      if ((chaseMode || desperate) && isTrump && !isPoint && projection.holdProb >= 0.48) score += 6.5;
+      if ((nearLine || ctx.late) && isPoint && (master || projection.holdProb >= 0.68)) score += 7.5;
+      if (desperate && !isPoint && !isTrump && card.value <= 9 && projection.enemySwingProb < 0.26) score += 2.8; // 低牌探門，找切牌窗口。
+    }
+
+    // V24：拿破崙軍若無法贏，不要把頭送給對手；尤其是拿破崙本人。
+    if (isPoint && !candidateWins && currentEnemyWinning && !ctx.actingLast) {
+      score -= (8 + (isNapoleon ? 3 : 0) + projection.enemyHoldProb * 5);
+    }
+  } else {
+    // V24：防家仍會擋約，但拿破崙明顯落後時不再每個小墩都用控制牌封死，避免測試長期偏防守。
+    const napFarBehind = napNeeds >= Math.max(5, remainingHeads * 0.55);
+    if (napFarBehind && candidateWins && pointsWithCard <= 1 && isControl && !ctx.late && !ctx.actingLast) score -= 3.2;
+    if (napFarBehind && currentAllyWinning && isPoint && !candidateWins && projection.enemySwingProb < 0.22 && !ctx.actingLast) score -= 2.4;
+  }
+
+  return score * weight;
+}
+
+function aiV24NapoleonCommanderNotes(game, seat, card, ctx) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 16 || !card || !ctx) return [];
+  const notes = [];
+  const trickLen = game.trick?.length || 0;
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const pointsWithCard = (ctx.pointsOnTable || 0) + (isHeadCard(card) ? 1 : 0);
+  const remainingHeads = Math.max(1, ctx.remainingHeads || 1);
+  const napNeeds = Math.max(0, ctx.napNeeds || 0);
+  const nearLine = napNeeds <= Math.max(4, Math.ceil(remainingHeads * 0.4));
+  const candidateWins = trickLen === 0 ? aiLikelyLeadWin(game, seat, card) >= 0.66 : wouldWin(game, card);
+  if (ctx.myTeam === "nap" && (nearLine || ctx.late) && candidateWins) notes.push("V24拿破崙強化：接近成敗線，主動兌現可守住的頭牌/控制牌");
+  if (ctx.myTeam === "nap" && !game.secretaryRevealed && card.id === game.secretaryCardId && (nearLine || ctx.late || pointsWithCard >= 2)) notes.push("V24秘書救局：不再死藏暗秘書，關鍵墩提高曝光支援權重");
+  if (seat === game.napoleon && trickLen === 0 && game.trump && game.trump !== "NT" && card.suit === game.trump && projection.enemyCutPressure < 0.5) notes.push("V24拿破崙節奏：用王牌控制節奏，逼出防家王牌");
+  if (ctx.myTeam === "def" && napNeeds >= Math.max(5, remainingHeads * 0.55)) notes.push("V24攻防平衡：拿破崙明顯落後時，防家降低非關鍵過度壓制");
+  return notes.slice(0, 2);
+}
+
 function aiExplainPlayChoice(game, seat, card) {
   const difficulty = Number(game.settings?.difficulty || 10);
   if (difficulty < 16 || !card) return null;
@@ -4152,6 +4243,7 @@ function aiExplainPlayChoice(game, seat, card) {
   parts.push(...aiV21NapoleonAttackBalanceNotes(game, seat, card, ctx));
   parts.push(...aiV22AdaptiveBalanceNotes(game, seat, card, ctx));
   parts.push(...aiV23MicroBalanceNotes(game, seat, card, ctx));
+  parts.push(...aiV24NapoleonCommanderNotes(game, seat, card, ctx));
   if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號、成約差、本局學習、AI風格、長局計畫、對手模型、送頭防護、防守平衡與攻防微調評分後選出");
   return `選 ${cardLong(card)}：${parts.slice(0, 3).join("；")}。`;
 }
