@@ -1,4 +1,4 @@
-const CACHE_NAME = "napoleon-secretary-v27-napoleon-window";
+const CACHE_NAME = "napoleon-secretary-v28-tips-replay-update";
 const ASSETS = [
   "./",
   "./index.html",
@@ -11,7 +11,6 @@ const ASSETS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
-  self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
@@ -35,4 +34,9 @@ self.addEventListener("fetch", (event) => {
       })
       .catch(() => caches.match(request).then((cached) => cached || caches.match("./index.html")))
   );
+});
+
+
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") self.skipWaiting();
 });

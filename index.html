@@ -38,6 +38,7 @@
             <option value="twilight">暮光風</option>
           </select>
         </label>
+        <label class="top-check" for="hintToggle"><input id="hintToggle" type="checkbox" /> 玩家提示</label>
         <button id="btnRules" class="ghost">玩法摘要</button>
         <button id="btnLeave" class="ghost hidden">離開房間</button>
       </div>
@@ -237,6 +238,7 @@
           <div id="scoreList"></div>
         </div>
         <div id="actionPanel" class="actions"></div>
+        <div id="playerTips" class="player-tips hidden"></div>
       </aside>
 
       <section class="table-wrap">
@@ -303,10 +305,31 @@
         <h2 id="resultTitle">勝利！</h2>
         <p id="resultSubtitle" class="result-subtitle"></p>
         <div id="resultStats" class="result-stats"></div>
-        <button id="resultClose" class="primary">繼續</button>
+        <div class="result-buttons">
+          <button id="resultReplay" class="ghost" type="button">牌局回放</button>
+          <button id="resultClose" class="primary">繼續</button>
+        </div>
       </div>
     </div>
 
+    <dialog id="replayDialog" class="replay-dialog">
+      <div class="dialog-body replay-body">
+        <button id="closeReplay" class="close">×</button>
+        <h2>牌局回放</h2>
+        <p id="replaySummary" class="hint"></p>
+        <div id="replayList" class="replay-list"></div>
+      </div>
+    </dialog>
+
+    <div id="updateBanner" class="update-banner hidden" role="status" aria-live="polite">
+      <span>有新版可用，重新載入後即可更新。</span>
+      <div>
+        <button id="btnReloadUpdate" class="primary" type="button">重新載入</button>
+        <button id="btnDismissUpdate" class="ghost" type="button">稍後</button>
+      </div>
+    </div>
+
+    <footer id="versionFooter" class="version-footer"></footer>
     <div id="toast" class="toast hidden"></div>
   </div>
   <script type="module" src="app.js"></script>

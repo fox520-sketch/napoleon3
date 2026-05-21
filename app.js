@@ -40,6 +40,8 @@ async function loadFirebaseSdk() {
   serverTimestamp = dbMod.serverTimestamp;
 }
 
+const APP_VERSION = "AI V28｜提示・回放・更新";
+const APP_BUILD = "2026-05-21-v28";
 const $ = (id) => document.getElementById(id);
 const SUITS = {
   S: { sym: "♠", name: "黑桃", color: "black", order: 4 },
@@ -73,7 +75,8 @@ const FIREBASE_CONFIG = {
 const STORAGE = {
   name: "napoleon.player.name.v1",
   logVisible: "napoleon.log.visible.v1",
-  theme: "napoleon.theme.v1"
+  theme: "napoleon.theme.v1",
+  playerHints: "napoleon.player.hints.v1"
 };
 const THEME_OPTIONS = ["auto", "ocean", "eye-care", "e-ink", "forest", "grassland", "sakura", "twilight"];
 const THEME_PALETTE = THEME_OPTIONS.filter((theme) => theme !== "auto");
@@ -98,7 +101,8 @@ const appState = {
   offline: false,
   offlineTimer: null,
   currentRoundResultKey: null,
-  dismissedRoundResultKey: null
+  dismissedRoundResultKey: null,
+  waitingWorker: null
 };
 
 function init() {
@@ -129,6 +133,12 @@ function init() {
   $("btnRules").addEventListener("click", () => $("rulesDialog").showModal());
   $("closeRules").addEventListener("click", () => $("rulesDialog").close());
   $("themeSelect").addEventListener("change", (event) => applyTheme(event.target.value, true));
+  $("hintToggle")?.addEventListener("change", (event) => setPlayerHintsVisible(event.target.checked));
+  applyPlayerHintsVisible(getPlayerHintsVisible());
+  $("closeReplay")?.addEventListener("click", () => $("replayDialog")?.close());
+  $("resultReplay")?.addEventListener("click", () => openReplayDialog(appState.room?.game));
+  $("btnReloadUpdate")?.addEventListener("click", reloadForUpdate);
+  $("btnDismissUpdate")?.addEventListener("click", () => $("updateBanner")?.classList.add("hidden"));
   $("resultClose").addEventListener("click", hideRoundResultOverlay);
   $("difficulty").addEventListener("input", () => {
     $("difficultyLabel").textContent = $("difficulty").value;
@@ -138,6 +148,7 @@ function init() {
     $(id).addEventListener("change", syncLobbySettingsSoon);
   }
   renderConnectState();
+  renderVersionInfo();
   if (appState.autoJoinCode) {
     window.setTimeout(() => connectFirebase(), 250);
   }
@@ -5208,8 +5219,10 @@ function renderGame() {
   renderTrick(game);
   renderHand(game);
   renderActions(game);
+  renderPlayerTips(game);
   renderLog(game);
   renderRoundResultAnimation(game);
+  renderVersionInfo();
 }
 
 function renderPhase(game) {
@@ -5523,10 +5536,11 @@ function renderActions(game) {
   }
   if (game.phase === PHASE.ROUND_END) {
     el.innerHTML = isHost()
-      ? `<div class="inline"><button id="btnNextRound" class="primary">再玩一局</button><button id="btnReturnLobby" class="ghost">${appState.offline ? "回主畫面" : "返回大廳"}</button></div><p class="hint">再玩一局會保留目前分數並換下一位發牌；返回大廳可重新調整座位與規則。</p>`
-      : `<p class="hint">等待房主選擇再玩一局或返回大廳。</p>`;
+      ? `<div class="inline"><button id="btnNextRound" class="primary">再玩一局</button><button id="btnReturnLobby" class="ghost">${appState.offline ? "回主畫面" : "返回大廳"}</button><button id="btnOpenReplay" class="ghost">牌局回放</button></div><p class="hint">再玩一局會保留目前分數並換下一位發牌；返回大廳可重新調整座位與規則。</p>`
+      : `<div class="inline"><button id="btnOpenReplay" class="ghost">牌局回放</button></div><p class="hint">等待房主選擇再玩一局或返回大廳。</p>`;
     $("btnNextRound")?.addEventListener("click", hostNextRound);
     $("btnReturnLobby")?.addEventListener("click", hostReturnToLobby);
+    $("btnOpenReplay")?.addEventListener("click", () => openReplayDialog(game));
     return;
   }
   if (!myTurn) {
@@ -5590,6 +5604,170 @@ function renderActions(game) {
 function isMyTurn(game) {
   const seat = myGameSeat(game);
   return seat !== null && game.currentPlayer === seat;
+}
+
+
+function getPlayerHintsVisible() {
+  return localStorage.getItem(STORAGE.playerHints) === "1";
+}
+
+function setPlayerHintsVisible(visible) {
+  localStorage.setItem(STORAGE.playerHints, visible ? "1" : "0");
+  applyPlayerHintsVisible(visible);
+  renderPlayerTips(appState.room?.game || null);
+}
+
+function applyPlayerHintsVisible(visible) {
+  const toggle = $("hintToggle");
+  if (toggle) toggle.checked = Boolean(visible);
+  const panel = $("playerTips");
+  if (panel) panel.classList.toggle("hidden", !visible || !appState.room?.game);
+}
+
+function renderPlayerTips(game) {
+  const panel = $("playerTips");
+  if (!panel) return;
+  const visible = getPlayerHintsVisible();
+  if (!visible || !game || appState.room?.meta?.status === "lobby") {
+    panel.classList.add("hidden");
+    panel.innerHTML = "";
+    return;
+  }
+  const tips = buildPlayerTips(game);
+  panel.classList.toggle("hidden", !tips.length);
+  panel.innerHTML = tips.length
+    ? `<h3>玩家提示</h3><ul>${tips.map((tip) => `<li>${escapeHtml(tip)}</li>`).join("")}</ul>`
+    : "";
+}
+
+function buildPlayerTips(game) {
+  const seat = myGameSeat(game);
+  if (seat === null || seat === undefined) return [];
+  const tips = [];
+  const totals = game.napoleon !== null && game.napoleon !== undefined ? calculateHeadTotals(game) : null;
+  if (totals && game.phase !== PHASE.ROUND_END) {
+    const gap = totals.contract - totals.teamHeads;
+    if (teamOf(game, seat) === "nap") tips.push(`拿破崙軍目前 ${totals.teamHeads}/${totals.contract} 頭，還差 ${Math.max(0, gap)} 頭。`);
+    else tips.push(`聯合國目前守到 ${totals.defenderHeads} 頭，讓拿破崙少於 ${totals.contract} 頭即可。`);
+  }
+  if (!isMyTurn(game)) {
+    const current = game.currentPlayer !== null && game.currentPlayer !== undefined ? game.players?.[game.currentPlayer]?.name : "其他玩家";
+    tips.push(`目前等待 ${current} 操作。`);
+    return tips;
+  }
+  if (game.phase === PHASE.BIDDING) return tips.concat(playerBidTips(game, seat));
+  if (game.phase === PHASE.EXCHANGE) return tips.concat(playerExchangeTips(game, seat));
+  if (game.phase === PHASE.SECRETARY) return tips.concat(playerSecretaryTips(game, seat));
+  if (game.phase === PHASE.PLAY) return tips.concat(playerPlayTips(game, seat));
+  if (game.phase === PHASE.ROUND_END) tips.push("本局已結束，可查看牌局回放理解關鍵墩。 ");
+  return tips;
+}
+
+function playerBidTips(game, seat) {
+  const hand = game.players?.[seat]?.hand || [];
+  const profile = aiEvaluateBidProfile(hand, game.settings || {}, game.settings?.difficulty || 10);
+  const legal = legalBidsAbove(game.bidding?.highest || null, game.settings || {});
+  const tips = [];
+  const bestLegal = legal
+    .filter((b) => b.amount <= Math.max(9, Math.floor(profile.expectedHeads + 0.4)))
+    .map((b) => ({ bid: b, score: aiBidSuitScore(profile, b) }))
+    .sort((a, b) => b.score - a.score)[0]?.bid;
+  tips.push(`估計牌力約 ${profile.expectedHeads.toFixed(1)} 頭，王牌候選以 ${suitName(profile.bestSuit || "S")} 較佳。`);
+  if (bestLegal) tips.push(`可考慮叫 ${formatBid(bestLegal)}；若目前叫品已接近牌力上限，Pass 也合理。`);
+  else tips.push("目前沒有很舒服的叫品，建議保守 Pass。 ");
+  return tips;
+}
+
+function playerExchangeTips(game, seat) {
+  const ids = new Set(aiChooseBuried(game, seat));
+  const cards = (game.players?.[seat]?.hand || []).filter((c) => ids.has(c.id));
+  const names = cards.map(cardLong).join("、") || "低非王牌";
+  return [`建議優先蓋牌：${names}。`, "通常保留鬼牌、王牌控制牌與可穩收的頭牌；短門小牌可視情況蓋掉來製造切牌。"];
+}
+
+function playerSecretaryTips(game, seat) {
+  const id = aiChooseSecretary(game, seat);
+  const card = findCardById(id);
+  return [`建議秘書牌：${cardLong(card)}。`, "高成約適合找鬼牌、王牌大牌或能補你短門弱點的頭牌。"];
+}
+
+function playerPlayTips(game, seat) {
+  const legal = legalCardsFor(game, seat);
+  if (!legal.length) return ["目前沒有合法牌可出。"];
+  const context = aiBuildPlayContext(game, seat);
+  const scored = legal.map((card) => ({ card, score: aiScorePlayCard(game, seat, card, context) + aiAdvancedPlayAdjustment(game, seat, card, context, legal) }))
+    .sort((a, b) => b.score - a.score);
+  const best = scored[0]?.card || legal[0];
+  const leadSuit = effectiveLeadSuit(game.trick);
+  const tips = [];
+  if (leadSuit) tips.push(`本墩首引花色是 ${suitName(leadSuit)}，有同花色時必須跟牌。`);
+  else tips.push("你是本墩首攻，優先考慮安全收頭、探門，或依局勢抽王牌。 ");
+  tips.push(`推薦出牌：${cardLong(best)}。${playerPlayReason(game, seat, best)}`);
+  if (scored[1]) tips.push(`備選：${cardLong(scored[1].card)}。`);
+  return tips;
+}
+
+function playerPlayReason(game, seat, card) {
+  const totals = calculateHeadTotals(game);
+  const trickHeads = countPoints((game.trick || []).map((p) => p.card)) + (isHeadCard(card) ? 1 : 0);
+  const isNapTeam = teamOf(game, seat) === "nap";
+  const wins = game.trick?.length ? wouldWin(game, card) : aiLikelyLeadWin(game, seat, card) >= 0.65;
+  if (isNapTeam && totals.contract - totals.teamHeads <= 3 && wins) return `目前接近成敗線，這張有機會搶下 ${trickHeads} 頭。`;
+  if (!isNapTeam && totals.contract - totals.teamHeads <= 3 && wins) return `拿破崙接近達標，這張可嘗試攔截。`;
+  if (isHeadCard(card) && !wins) return "這是頭牌但未必能吃，請注意後手風險。";
+  if (wins) return "它有機會以較低成本吃下本墩。";
+  return "它可降低送出控制牌的風險。";
+}
+
+function openReplayDialog(game = appState.room?.game) {
+  const dialog = $("replayDialog");
+  if (!dialog || !game) return toast("目前沒有可回放的牌局");
+  const histories = Array.isArray(game.trickHistory) ? game.trickHistory : [];
+  const result = calculateRoundResult(game) || game.roundResult;
+  const summary = result
+    ? `拿破崙軍 ${result.teamHeads}/${result.contract} 頭，聯合國 ${result.defenderHeads} 頭，勝方：${result.winningTeam === "nap" ? "拿破崙軍" : "聯合國"}。`
+    : `目前共有 ${histories.length} 墩紀錄。`;
+  $("replaySummary").textContent = summary;
+  $("replayList").innerHTML = histories.length
+    ? histories.map((h) => renderReplayTrick(game, h)).join("")
+    : `<p class="hint">目前還沒有完整墩紀錄。</p>`;
+  dialog.showModal();
+}
+
+function renderReplayTrick(game, h) {
+  const winnerName = game.players?.[h.winner]?.name || `座位 ${Number(h.winner) + 1}`;
+  const plays = (h.plays || []).map((p) => {
+    const name = game.players?.[p.seat]?.name || `座位 ${Number(p.seat) + 1}`;
+    const isWinner = Number(p.seat) === Number(h.winner);
+    return `<div class="replay-play ${isWinner ? "winner" : ""}"><span>${escapeHtml(name)}</span><b class="${cardClass(p.card)}">${escapeHtml(cardLabel(p.card))}</b></div>`;
+  }).join("");
+  const roleNote = replayTrickNote(game, h);
+  return `<article class="replay-trick"><header><b>第 ${Number(h.trickNo) + 1} 墩</b><span>${escapeHtml(winnerName)} 吃下，${h.heads || 0} 頭</span></header><div class="replay-plays">${plays}</div>${roleNote ? `<p>${escapeHtml(roleNote)}</p>` : ""}</article>`;
+}
+
+function replayTrickNote(game, h) {
+  const winnerTeam = teamOf(game, h.winner);
+  const lead = h.leadSuit ? `首引 ${suitName(h.leadSuit)}` : "首引未指定花色";
+  if ((h.heads || 0) >= 2) return `${lead}；本墩有 ${h.heads} 頭，是關鍵多頭墩。`;
+  if (winnerTeam === "nap") return `${lead}；拿破崙軍收下本墩。`;
+  return `${lead}；聯合國守住本墩。`;
+}
+
+function renderVersionInfo() {
+  const el = $("versionFooter");
+  if (!el) return;
+  el.textContent = `版本：${APP_VERSION}（${APP_BUILD}）`;
+}
+
+function showUpdateBanner(worker) {
+  appState.waitingWorker = worker || appState.waitingWorker;
+  const banner = $("updateBanner");
+  if (banner) banner.classList.remove("hidden");
+}
+
+function reloadForUpdate() {
+  if (appState.waitingWorker) appState.waitingWorker.postMessage({ type: "SKIP_WAITING" });
+  window.location.reload();
 }
 
 function getLogVisible() {
@@ -5701,8 +5879,23 @@ function escapeHtml(value) {
 
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
+  });
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js").catch((error) => {
+    navigator.serviceWorker.register("./service-worker.js").then((registration) => {
+      if (registration.waiting && navigator.serviceWorker.controller) showUpdateBanner(registration.waiting);
+      registration.addEventListener("updatefound", () => {
+        const worker = registration.installing;
+        if (!worker) return;
+        worker.addEventListener("statechange", () => {
+          if (worker.state === "installed" && navigator.serviceWorker.controller) showUpdateBanner(worker);
+        });
+      });
+    }).catch((error) => {
       console.warn("Service worker registration failed", error);
     });
   });

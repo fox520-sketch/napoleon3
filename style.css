@@ -1536,3 +1536,125 @@ body[data-theme="twilight"] .ai-health-notes { color: #d3ddfb; }
   .ai-test-card button { width: 100%; }
   .ai-health-grid { grid-template-columns: 1fr auto; }
 }
+
+/* V28: player tips, replay, version/update UI */
+.top-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  padding: 0.58rem 0.78rem;
+  border-radius: 999px;
+  color: var(--primary);
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid var(--line);
+  font-weight: 800;
+  white-space: nowrap;
+}
+.top-check input { width: auto; }
+.player-tips {
+  margin-top: 1rem;
+  padding: 0.9rem;
+  border-radius: 18px;
+  color: var(--ink);
+  background: linear-gradient(135deg, rgba(255, 247, 215, 0.72), rgba(255, 255, 255, 0.56));
+  border: 1px solid rgba(214, 158, 46, 0.24);
+  box-shadow: 0 12px 28px rgba(18, 87, 113, 0.08);
+}
+.player-tips h3 { margin-bottom: 0.45rem; font-size: 1rem; }
+.player-tips ul { margin: 0; padding-left: 1.1rem; display: grid; gap: 0.36rem; }
+.player-tips li { line-height: 1.5; color: var(--ink); }
+.result-buttons { display: flex; justify-content: center; gap: 0.65rem; flex-wrap: wrap; }
+.replay-dialog { width: min(920px, calc(100% - 24px)); }
+.replay-body { max-height: min(82vh, 780px); overflow: auto; }
+.replay-list { display: grid; gap: 0.72rem; margin-top: 0.8rem; }
+.replay-trick {
+  padding: 0.82rem;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.7);
+}
+.replay-trick header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.55rem;
+  color: var(--ink);
+}
+.replay-trick header span { color: var(--muted); font-weight: 760; }
+.replay-plays { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.replay-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.36rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(8, 126, 164, 0.08);
+  border: 1px solid rgba(8, 126, 164, 0.12);
+  font-size: 0.9rem;
+}
+.replay-play.winner {
+  background: linear-gradient(135deg, rgba(255, 247, 215, 0.96), rgba(255, 255, 255, 0.72));
+  border-color: rgba(214, 158, 46, 0.34);
+  box-shadow: 0 6px 14px rgba(214, 158, 46, 0.12);
+}
+.replay-play b.red { color: #d03548; }
+.replay-play b.black { color: var(--ink); }
+.replay-play b.joker { color: var(--primary); }
+.replay-trick p { margin: 0.55rem 0 0; color: var(--muted); }
+.version-footer {
+  margin: 1rem auto 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 760;
+}
+.update-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 82px;
+  transform: translateX(-50%);
+  z-index: 60;
+  width: min(92vw, 560px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 0.8rem;
+  border-radius: 20px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--line);
+  box-shadow: 0 22px 58px rgba(7, 32, 45, 0.22);
+}
+.update-banner div { display: flex; gap: 0.45rem; }
+.update-banner button { padding: 0.55rem 0.78rem; }
+body[data-theme="twilight"] .top-check,
+body[data-theme="twilight"] .player-tips,
+body[data-theme="twilight"] .replay-trick,
+body[data-theme="twilight"] .update-banner {
+  color: #eef3ff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(196, 205, 236, 0.18);
+}
+body[data-theme="twilight"] .player-tips li,
+body[data-theme="twilight"] .replay-trick header,
+body[data-theme="twilight"] .replay-play b.black { color: #eef3ff; }
+body[data-theme="twilight"] .replay-trick header span,
+body[data-theme="twilight"] .replay-trick p,
+body[data-theme="twilight"] .version-footer { color: #d3ddfb; }
+body[data-theme="twilight"] .replay-play {
+  background: rgba(144, 161, 255, 0.12);
+  border-color: rgba(196, 205, 236, 0.18);
+}
+body[data-theme="twilight"] .replay-play.winner {
+  background: rgba(214, 158, 46, 0.16);
+  border-color: rgba(255, 233, 160, 0.22);
+}
+@media (max-width: 720px) {
+  .top-check { width: 100%; justify-content: center; }
+  .player-tips { padding: 0.72rem; margin-top: 0.72rem; }
+  .replay-trick header { flex-direction: column; gap: 0.18rem; }
+  .update-banner { bottom: 70px; flex-direction: column; align-items: stretch; }
+  .update-banner div { justify-content: stretch; }
+  .update-banner button { flex: 1; }
+}
