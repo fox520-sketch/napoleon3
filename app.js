@@ -40,8 +40,8 @@ async function loadFirebaseSdk() {
   serverTimestamp = dbMod.serverTimestamp;
 }
 
-const APP_VERSION = "AI V35｜測試清單・玩法教學・回放分析";
-const APP_BUILD = "2026-05-21-v35";
+const APP_VERSION = "AI V36｜觀戰・成就・回放分享";
+const APP_BUILD = "2026-05-21-v36";
 const ROOM_TTL_MS = 1000 * 60 * 60 * 24;
 const ROOM_STALE_MS = 1000 * 60 * 60 * 12;
 const $ = (id) => document.getElementById(id);
@@ -86,7 +86,8 @@ const STORAGE = {
   lastRoom: "napoleon.last.room.v1",
   lastRoomAt: "napoleon.last.room.at.v1",
   onboardingSeen: "napoleon.onboarding.seen.v1",
-  releaseChecklist: "napoleon.release.checklist.v35"
+  releaseChecklist: "napoleon.release.checklist.v36",
+  achievementsSeen: "napoleon.achievements.seen.v1"
 };
 const THEME_OPTIONS = ["auto", "ocean", "eye-care", "e-ink", "forest", "grassland", "sakura", "twilight"];
 const THEME_PALETTE = THEME_OPTIONS.filter((theme) => theme !== "auto");
@@ -123,7 +124,9 @@ const appState = {
   waitingWorker: null,
   lastTurnNoticeKey: null,
   audioContext: null,
-  recordedRoundKeys: new Set()
+  recordedRoundKeys: new Set(),
+  spectator: false,
+  lastReplayText: ""
 };
 
 function init() {
@@ -150,6 +153,7 @@ function init() {
   $("btnRunDiagnostics")?.addEventListener("click", runDiagnostics);
   $("btnShowLocalStats")?.addEventListener("click", renderLocalStatsSummary);
   $("btnShareStats")?.addEventListener("click", shareLocalStats);
+  $("btnShareAchievements")?.addEventListener("click", shareAchievements);
   $("btnExportLocalData")?.addEventListener("click", exportLocalData);
   $("btnImportLocalData")?.addEventListener("click", openImportDataDialog);
   $("btnCopyErrorReport")?.addEventListener("click", copyErrorReport);
@@ -161,6 +165,7 @@ function init() {
   $("btnConnect").addEventListener("click", connectFirebase);
   $("btnCreateRoom").addEventListener("click", createRoom);
   $("btnJoinRoom").addEventListener("click", joinRoomFromInput);
+  $("btnJoinSpectator")?.addEventListener("click", joinAsSpectatorFromInput);
   $("btnLeave").addEventListener("click", leaveRoom);
   $("btnGameExit").addEventListener("click", leaveRoom);
   $("btnCopyLink").addEventListener("click", copyInviteLink);
@@ -210,6 +215,7 @@ function init() {
   $("vibrationToggle")?.addEventListener("change", (event) => setVibrationEnabled(event.target.checked));
   applyFeedbackSettings();
   $("closeReplay")?.addEventListener("click", () => $("replayDialog")?.close());
+  $("btnShareReplay")?.addEventListener("click", shareReplay);
   $("resultReplay")?.addEventListener("click", () => openReplayDialog(appState.room?.game));
   $("btnReloadUpdate")?.addEventListener("click", reloadForUpdate);
   $("btnDismissUpdate")?.addEventListener("click", () => $("updateBanner")?.classList.add("hidden"));
@@ -225,6 +231,7 @@ function init() {
   renderConnectState();
   renderVersionInfo();
   renderLocalStatsSummary();
+  renderAchievementSummary();
   renderReleaseChecklistStatus();
   installErrorCapture();
   installKeyboardShortcuts();
@@ -333,6 +340,7 @@ async function connectFirebase() {
 function renderConnectState() {
   $("btnCreateRoom").disabled = !appState.connected;
   $("btnJoinRoom").disabled = !appState.connected;
+  $("btnJoinSpectator") && ($("btnJoinSpectator").disabled = !appState.connected);
   $("btnStartOffline").disabled = false;
 }
 
@@ -822,6 +830,7 @@ function recordRoundStats(key, game, result, seat, playerTeam, playerWon, delta)
   saveLocalStats(stats);
   appState.recordedRoundKeys.add(key);
   renderLocalStatsSummary();
+  renderAchievementSummary();
 }
 
 function renderLocalStatsSummary() {
@@ -853,6 +862,58 @@ function renderLocalStatsSummary() {
   `;
 }
 
+
+function computeAchievements(stats = loadLocalStats()) {
+  const winRate = stats.games ? Math.round((stats.wins / Math.max(1, stats.games)) * 100) : 0;
+  const napRate = stats.napGames ? Math.round((stats.napWins / Math.max(1, stats.napGames)) * 100) : 0;
+  const defRate = stats.defGames ? Math.round((stats.defWins / Math.max(1, stats.defGames)) * 100) : 0;
+  return [
+    { id: "first-game", title: "初次上桌", desc: "完成 1 局", unlocked: stats.games >= 1 },
+    { id: "five-games", title: "牌桌常客", desc: "完成 5 局", unlocked: stats.games >= 5 },
+    { id: "twenty-games", title: "老練玩家", desc: "完成 20 局", unlocked: stats.games >= 20 },
+    { id: "first-win", title: "首勝", desc: "拿下第 1 場勝利", unlocked: stats.wins >= 1 },
+    { id: "nap-win", title: "拿破崙達標", desc: "以拿破崙軍獲勝 1 次", unlocked: stats.napWins >= 1 },
+    { id: "def-win", title: "聯合國守成", desc: "以聯合國獲勝 1 次", unlocked: stats.defWins >= 1 },
+    { id: "close-master", title: "關鍵一頭", desc: "完成 3 局接近成敗線牌局", unlocked: stats.closeGames >= 3 },
+    { id: "balanced-player", title: "攻守兼備", desc: "拿破崙與聯合國各勝 1 次", unlocked: stats.napWins >= 1 && stats.defWins >= 1 },
+    { id: "winrate", title: "勝率達人", desc: "至少 10 局且勝率 60% 以上", unlocked: stats.games >= 10 && winRate >= 60 },
+    { id: "nap-specialist", title: "拿破崙專家", desc: "至少 5 局拿破崙軍且勝率 50% 以上", unlocked: stats.napGames >= 5 && napRate >= 50 },
+    { id: "def-specialist", title: "防守專家", desc: "至少 5 局聯合國且勝率 50% 以上", unlocked: stats.defGames >= 5 && defRate >= 50 }
+  ];
+}
+
+function renderAchievementSummary() {
+  const el = $("achievementSummary");
+  if (!el) return;
+  const stats = loadLocalStats();
+  const achievements = computeAchievements(stats);
+  const unlocked = achievements.filter((a) => a.unlocked);
+  const recent = achievements.slice(0, 11).map((a) => `<div class="achievement ${a.unlocked ? "unlocked" : "locked"}"><b>${a.unlocked ? "🏅" : "🔒"} ${escapeHtml(a.title)}</b><span>${escapeHtml(a.desc)}</span></div>`).join("");
+  el.innerHTML = `<div class="achievement-head"><b>${unlocked.length}/${achievements.length} 成就已解鎖</b><span>${stats.games ? "繼續完成牌局可解鎖更多成就。" : "完成一局後開始解鎖成就。"}</span></div><div class="achievement-grid">${recent}</div>`;
+}
+
+async function shareAchievements() {
+  const stats = loadLocalStats();
+  const achievements = computeAchievements(stats);
+  const unlocked = achievements.filter((a) => a.unlocked);
+  const text = [
+    "拿破崙與秘書｜本機成就",
+    `版本：${APP_VERSION}`,
+    `已解鎖：${unlocked.length}/${achievements.length}`,
+    `總局數：${stats.games || 0}`,
+    `勝率：${stats.games ? Math.round((stats.wins / Math.max(1, stats.games)) * 100) + "%" : "-"}`,
+    unlocked.length ? `成就：${unlocked.map((a) => a.title).join("、")}` : "成就：尚未解鎖"
+  ].join("\n");
+  try {
+    if (navigator.share) await navigator.share({ title: "拿破崙與秘書成就", text });
+    else await navigator.clipboard.writeText(text);
+    toast(navigator.share ? "已開啟分享" : "成就已複製");
+  } catch {
+    await navigator.clipboard.writeText(text).catch(() => {});
+    toast("成就已複製");
+  }
+}
+
 function collectLocalData() {
   return {
     appVersion: APP_VERSION,
@@ -866,6 +927,7 @@ function collectLocalData() {
       playerName: localStorage.getItem(STORAGE.name) || ""
     },
     stats: loadLocalStats(),
+    achievements: computeAchievements(loadLocalStats()).filter((a) => a.unlocked).map((a) => a.id),
     lastRoom: localStorage.getItem(STORAGE.lastRoom) || "",
     errors: loadErrorLog()
   };
@@ -1284,6 +1346,8 @@ async function runDiagnostics() {
   add("本機儲存", (() => { try { localStorage.setItem("napoleon.diag", "1"); localStorage.removeItem("napoleon.diag"); return true; } catch { return false; } })(), "用於記住主題、提示、上次房號與偏好");
   const stats = loadLocalStats();
   add("本機統計", true, stats.games ? `${stats.games} 局，勝率 ${Math.round((stats.wins / Math.max(1, stats.games)) * 100)}%` : "尚無完成牌局");
+  const unlockedAchievements = computeAchievements(stats).filter((a) => a.unlocked).length;
+  add("本機成就", true, `${unlockedAchievements}/${computeAchievements(stats).length} 已解鎖`);
   add("錯誤回報", true, `${loadErrorLog().length} 筆本機錯誤紀錄`);
   add("無障礙/快捷鍵", true, "支援鍵盤 H/L/R/T；焦點樣式已加強；主要狀態區使用 aria-live");
   add("音效/震動", true, `${isSoundEnabled() ? "音效開" : "音效關"}，${isVibrationEnabled() ? "震動開" : "震動關"}`);
@@ -1340,6 +1404,7 @@ function startOfflineGame() {
 
 async function createRoom() {
   if (!appState.connected) return toast("請先連線 Firebase");
+  appState.spectator = false;
   const name = sanitizeName($("playerName").value);
   localStorage.setItem(STORAGE.name, name);
   let code = generateRoomCode();
@@ -1357,7 +1422,7 @@ async function createRoom() {
       createdAt: now,
       updatedAt: now,
       expiresAt: now + ROOM_TTL_MS,
-      schemaVersion: 33,
+      schemaVersion: 36,
       appBuild: APP_BUILD
     },
     lobby: {
@@ -1369,6 +1434,7 @@ async function createRoom() {
     },
     game: null
   };
+  appState.spectator = false;
   appState.roomCode = code;
   await set(roomRef(), room);
   await enterRoom(code);
@@ -1398,6 +1464,34 @@ async function joinRoomFromInput() {
   await joinRoom(code);
 }
 
+async function joinAsSpectatorFromInput() {
+  if (!appState.connected) return toast("請先連線 Firebase");
+  const code = $("roomCode").value.trim().toUpperCase();
+  if (!code) return toast("請輸入要觀戰的房號");
+  const snap = await get(ref(appState.db, `rooms/${code}`));
+  if (!snap.exists()) return toast("找不到房間");
+  await joinAsSpectator(code, snap.val());
+}
+
+async function joinAsSpectator(code, room = null) {
+  if (!appState.connected) return toast("請先連線 Firebase");
+  const name = sanitizeName($("playerName").value);
+  localStorage.setItem(STORAGE.name, name);
+  appState.spectator = true;
+  const spectatorData = {
+    uid: appState.uid,
+    name,
+    type: "spectator",
+    joinedAt: Date.now(),
+    online: true,
+    lastSeen: Date.now()
+  };
+  await update(ref(appState.db, `rooms/${code}/spectators/${appState.uid}`), spectatorData).catch(() => {});
+  if (room?.meta?.status !== "lobby") toast("已用觀戰模式加入；可看公開牌桌與回放，不能出牌。");
+  else toast("座位已滿或你選擇觀戰，已用觀戰模式加入。房主開始後可旁觀本局。");
+  await enterRoom(code);
+}
+
 async function joinRoom(code) {
   const roomPath = ref(appState.db, `rooms/${code}`);
   const snap = await get(roomPath);
@@ -1409,14 +1503,17 @@ async function joinRoom(code) {
     const gamePlayer = room.game?.players?.find((p) => p?.uid === appState.uid);
     const lobbySeat = Object.values(room.lobby?.seats || {}).find((seat) => seat?.uid === appState.uid);
     if (gamePlayer || lobbySeat) {
+      appState.spectator = false;
       await enterRoom(code);
       toast(`已重新連回房間 ${code}`);
       return;
     }
-    return toast("這個房間已開局；只有原本座位可重連。可請房主把離線玩家改電腦。");
+    await joinAsSpectator(code, room);
+    return;
   }
   const name = sanitizeName($("playerName").value);
   localStorage.setItem(STORAGE.name, name);
+  appState.spectator = false;
   const seatsRef = ref(appState.db, `rooms/${code}/lobby/seats`);
   const result = await runTransaction(seatsRef, (seats) => {
     seats = seats || {};
@@ -1435,7 +1532,10 @@ async function joinRoom(code) {
     }
     return undefined;
   });
-  if (!result.committed) return toast("房間已滿");
+  if (!result.committed) {
+    await joinAsSpectator(code, room);
+    return;
+  }
   await update(ref(appState.db, `rooms/${code}/meta`), { updatedAt: Date.now() });
   await enterRoom(code);
   toast(`已加入房間 ${code}`);
@@ -1487,6 +1587,7 @@ async function leaveRoom(updateSeat = true) {
     appState.offline = false;
     appState.uid = appState.firebaseUid || appState.uid;
     appState.roomCode = null;
+    appState.spectator = false;
     appState.selectedExchange.clear();
     document.body.classList.remove("in-game", "offline-game");
     history.replaceState(null, "", location.pathname);
@@ -1502,9 +1603,13 @@ async function leaveRoom(updateSeat = true) {
     if (seat !== null && appState.room.meta?.status === "lobby") {
       await remove(roomRef(`lobby/seats/${seat}`)).catch(() => {});
     }
+    if (appState.spectator && appState.uid && appState.db) {
+      await remove(ref(appState.db, `rooms/${appState.roomCode}/spectators/${appState.uid}`)).catch(() => {});
+    }
   }
   detachRoom();
   appState.roomCode = null;
+  appState.spectator = false;
   appState.selectedExchange.clear();
   document.body.classList.remove("in-game", "offline-game");
   history.replaceState(null, "", location.pathname);
@@ -1516,7 +1621,17 @@ async function leaveRoom(updateSeat = true) {
 
 function markOnlinePresence() {
   const seat = myLobbySeat();
-  if (seat === null || !appState.roomCode) return;
+  if (!appState.roomCode) return;
+  if (seat === null && appState.spectator && appState.uid) {
+    const key = `${appState.roomCode}:spectator:${appState.uid}`;
+    if (appState.presenceKey === key) return;
+    appState.presenceKey = key;
+    const spectatorRef = roomRef(`spectators/${appState.uid}`);
+    update(spectatorRef, { online: true, lastSeen: serverTimestamp() }).catch(() => {});
+    onDisconnect(spectatorRef).update({ online: false, lastSeen: serverTimestamp() }).catch(() => {});
+    return;
+  }
+  if (seat === null) return;
   const key = `${appState.roomCode}:${seat}`;
   if (appState.presenceKey === key) return;
   appState.presenceKey = key;
@@ -1573,13 +1688,14 @@ function renderLobby() {
   $("inviteQr").alt = `房間 ${room.meta.code} 加入連結 QR Code`;
   const seats = room.lobby?.seats || {};
   const ordered = Array.from({ length: 5 }, (_, i) => seats[i] || null);
+  const spectators = Object.values(room.spectators || {}).filter((sp) => sp?.online !== false);
   $("lobbySeats").innerHTML = ordered.map((seat, i) => {
     if (!seat) return `<div class="lobby-seat"><div><b>座位 ${i + 1}</b><small>空位</small></div><span class="tag">等待</span></div>`;
     const mine = seat.uid === appState.uid ? "（你）" : "";
     const type = seat.type === "bot" ? "電腦" : "真人";
     const online = seat.online === false ? `離線${seat.lastSeen ? `・${timeAgo(seat.lastSeen)}` : ""}` : "在線";
     return `<div class="lobby-seat"><div><b>${escapeHtml(seat.name)}${mine}</b><small>座位 ${i + 1}・${type}・${online}</small></div><span class="tag ${seat.type === "bot" ? "gold" : ""}">${seat.score || 0} 分</span></div>`;
-  }).join("");
+  }).join("") + (spectators.length ? `<div class="spectator-list"><b>觀戰中</b>${spectators.map((sp) => `<span>👀 ${escapeHtml(sp.name || "觀眾")}</span>`).join("")}</div>` : "");
 
   applySettingsToUI(room.lobby?.settings || defaultSettings());
   const host = isHost();
@@ -1617,6 +1733,7 @@ function buildRoomStatusHtml(room) {
   const values = Object.values(seats);
   const humans = values.filter((seat) => seat?.type !== "bot");
   const bots = values.filter((seat) => seat?.type === "bot");
+  const spectators = Object.values(room.spectators || {}).filter((sp) => sp?.online !== false);
   const offlineHumans = humans.filter((seat) => seat?.online === false);
   const hostSeat = values.find((seat) => seat?.uid === room.meta?.hostUid);
   const updated = room.meta?.updatedAt ? timeAgo(room.meta.updatedAt) : "剛剛";
@@ -1639,6 +1756,7 @@ function buildRoomStatusHtml(room) {
       <span><b>${escapeHtml(state)}</b><small>房間狀態</small></span>
       <span><b>${escapeHtml(hostName)}</b><small>房主</small></span>
       <span><b>${humans.length} 真人 / ${bots.length} 電腦</b><small>座位</small></span>
+      <span><b>${spectators.length}</b><small>觀戰</small></span>
       <span><b>${escapeHtml(updated)}</b><small>最後同步</small></span>
       <span><b>${escapeHtml(created)}</b><small>建立時間</small></span>
       <span><b>${escapeHtml(expires)}</b><small>建議清理</small></span>
@@ -6388,8 +6506,14 @@ function currentBestTrickPlay(game) {
 
 function renderHand(game) {
   const seat = myGameSeat(game);
-  const hand = seat === null ? [] : (game.players[seat]?.hand || []);
-  $("handCount").textContent = `${hand.length} 張`;
+  const observer = seat === null || seat === undefined;
+  const hand = observer ? [] : (game.players[seat]?.hand || []);
+  $("handCount").textContent = observer ? "觀戰" : `${hand.length} 張`;
+  if (observer) {
+    $("hand").innerHTML = `<div class="spectator-hand-note">👀 觀戰模式：可看公開牌桌、牌局紀錄與回放，但不能查看手牌或操作。</div>`;
+    $("handHint").textContent = "你正在觀戰本局。";
+    return;
+  }
   const actionable = isMyTurn(game);
   const legalIds = new Set(legalCardsFor(game, seat).map((c) => c.id));
   $("hand").innerHTML = hand.map((card) => {
@@ -6461,6 +6585,11 @@ function renderActions(game) {
     $("btnNextRound")?.addEventListener("click", hostNextRound);
     $("btnReturnLobby")?.addEventListener("click", hostReturnToLobby);
     $("btnOpenReplay")?.addEventListener("click", () => openReplayDialog(game));
+    return;
+  }
+  if ((seat === null || seat === undefined) && appState.spectator) {
+    el.innerHTML = `<p class="hint">👀 觀戰模式：你可以看牌桌、紀錄與結算回放；不能出牌或叫牌。</p><button id="btnOpenReplaySpectator" class="ghost" type="button">牌局回放</button>`;
+    $("btnOpenReplaySpectator")?.addEventListener("click", () => openReplayDialog(game));
     return;
   }
   if (!myTurn) {
@@ -6651,7 +6780,40 @@ function openReplayDialog(game = appState.room?.game) {
   $("replayList").innerHTML = histories.length
     ? histories.map((h) => renderReplayTrick(game, h)).join("")
     : `<p class="hint">目前還沒有完整墩紀錄。</p>`;
+  appState.lastReplayText = buildReplayShareText(game, histories, summary);
   dialog.showModal();
+}
+
+
+function buildReplayShareText(game, histories = Array.isArray(game?.trickHistory) ? game.trickHistory : [], summary = "") {
+  const lines = ["拿破崙與秘書｜牌局回放", `版本：${APP_VERSION}`, summary || "無結算摘要"];
+  const keyTricks = histories
+    .map((h) => ({ h, tags: replayAnalysisTags(game, h) }))
+    .filter((item) => item.tags.length || (item.h.heads || 0) >= 2)
+    .slice(0, 6);
+  if (keyTricks.length) {
+    lines.push("關鍵墩：");
+    for (const item of keyTricks) {
+      const winnerName = game.players?.[item.h.winner]?.name || `座位 ${Number(item.h.winner) + 1}`;
+      const tags = item.tags.map((t) => t.text).join("、") || `${item.h.heads || 0} 頭`;
+      lines.push(`第 ${Number(item.h.trickNo) + 1} 墩：${winnerName} 吃，${tags}`);
+    }
+  } else {
+    lines.push("尚無可分享的關鍵墩標籤。");
+  }
+  return lines.join("\n");
+}
+
+async function shareReplay() {
+  const text = appState.lastReplayText || buildReplayShareText(appState.room?.game);
+  try {
+    if (navigator.share) await navigator.share({ title: "拿破崙與秘書牌局回放", text });
+    else await navigator.clipboard.writeText(text);
+    toast(navigator.share ? "已開啟回放分享" : "回放摘要已複製");
+  } catch {
+    await navigator.clipboard.writeText(text).catch(() => {});
+    toast("回放摘要已複製");
+  }
 }
 
 function renderReplayTrick(game, h) {

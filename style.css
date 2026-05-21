@@ -2099,3 +2099,81 @@ body[data-theme="twilight"] .replay-tags .tag-warning {
 @media (max-width: 720px) {
   .tutorial-grid { grid-template-columns: 1fr; }
 }
+
+/* V36: spectator, achievements, replay sharing */
+.spectator-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0.75rem;
+  border: 1px dashed var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.48);
+}
+.spectator-list b { margin-right: 0.25rem; }
+.spectator-list span {
+  display: inline-flex;
+  padding: 0.22rem 0.52rem;
+  border-radius: 999px;
+  color: var(--primary);
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid var(--line);
+  font-weight: 800;
+  font-size: 0.78rem;
+}
+.spectator-hand-note {
+  width: 100%;
+  padding: 0.85rem;
+  border-radius: 16px;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.58);
+  font-weight: 750;
+}
+.achievement-summary { margin-top: 0.85rem; }
+.achievement-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.7rem;
+  margin-bottom: 0.6rem;
+  color: var(--muted);
+}
+.achievement-head b { color: var(--ink); }
+.achievement-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 0.45rem;
+}
+.achievement {
+  display: grid;
+  gap: 0.18rem;
+  padding: 0.62rem;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.54);
+}
+.achievement b { font-size: 0.84rem; }
+.achievement span { color: var(--muted); font-size: 0.74rem; font-weight: 700; }
+.achievement.locked { opacity: 0.55; filter: grayscale(0.35); }
+.achievement.unlocked {
+  border-color: rgba(214, 158, 46, 0.36);
+  background: linear-gradient(135deg, rgba(255, 245, 210, 0.76), rgba(255,255,255,0.56));
+}
+.replay-actions { margin: 0.6rem 0 0.85rem; }
+body[data-theme="twilight"] .spectator-list,
+body[data-theme="twilight"] .spectator-hand-note,
+body[data-theme="twilight"] .achievement,
+body[data-theme="twilight"] .spectator-list span {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(196, 205, 236, 0.18);
+}
+body[data-theme="twilight"] .achievement.unlocked {
+  background: rgba(214, 158, 46, 0.16);
+  border-color: rgba(255, 228, 150, 0.22);
+}
+@media (max-width: 720px) {
+  .achievement-head { align-items: flex-start; flex-direction: column; }
+  .achievement-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

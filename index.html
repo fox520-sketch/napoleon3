@@ -181,10 +181,12 @@
           <h3>本機統計與維護</h3>
           <p class="hint">只記錄在這台裝置，用來追蹤單人與多人局勝敗、分數、拿破崙/聯合國表現，也可匯出設定和錯誤回報。</p>
           <div id="localStatsSummary" class="stats-summary" aria-live="polite">尚無本機統計。</div>
+          <div id="achievementSummary" class="achievement-summary" aria-live="polite"></div>
         </div>
         <div class="tool-actions">
           <button id="btnShowLocalStats" class="ghost" type="button">更新統計</button>
           <button id="btnShareStats" class="ghost" type="button">分享戰績</button>
+          <button id="btnShareAchievements" class="ghost" type="button">分享成就</button>
           <button id="btnExportLocalData" class="ghost" type="button">匯出資料</button>
           <button id="btnImportLocalData" class="ghost" type="button">還原資料</button>
           <button id="btnCopyErrorReport" class="ghost" type="button">複製錯誤回報</button>
@@ -223,8 +225,9 @@
         <button id="btnConnect" class="primary">連線 Firebase</button>
         <button id="btnCreateRoom" class="primary" disabled>建立新房</button>
         <button id="btnJoinRoom" class="ghost" disabled>加入房間</button>
+        <button id="btnJoinSpectator" class="ghost" disabled>觀戰加入</button>
       </div>
-      <p id="connectStatus" class="hint">單人離線可直接開始；多人模式請先連線 Firebase。</p>
+      <p id="connectStatus" class="hint">單人離線可直接開始；多人模式請先連線 Firebase。觀戰加入可在房間已滿或已開局時旁觀。</p>
     </section>
 
     <section id="lobbyView" class="card hidden">
@@ -440,12 +443,15 @@
       <div class="dialog-body release-body">
         <button id="closeReleaseNotes" class="close" type="button">×</button>
         <p class="eyebrow">版本更新</p>
-        <h2>AI V35：測試清單・玩法教學・回放分析</h2>
+        <h2>AI V36：觀戰・成就・回放分享</h2>
         <ul class="release-list">
           <li><b>正式版測試：</b>新增可勾選的公開前測試清單，可複製測試結果。</li>
           <li><b>完整玩法教學：</b>新增叫牌、換底牌、秘書、牌力大小、勝負判定與常見規則差異說明。</li>
           <li><b>回放分析標籤：</b>牌局回放會標示關鍵多頭墩、秘書曝光、控制牌使用、可疑送頭與擋約墩。</li>
-          <li><b>維護改善：</b>版本、快取與公開版文件更新為 V35。</li>
+          <li><b>維護改善：</b>版本、快取與公開版文件更新為 V36。</li>
+          <li><b>觀戰模式：</b>房間已滿或已開局時可用觀戰加入，看公開牌桌、紀錄與回放。</li>
+          <li><b>本機成就：</b>依局數、勝率、拿破崙/聯合國勝利與接近成敗線解鎖成就。</li>
+          <li><b>回放分享：</b>牌局回放可複製/分享關鍵墩摘要。</li>
         </ul>
         <div class="button-row dialog-actions">
           <button id="btnOpenTutorialFromRelease" class="ghost" type="button">玩法教學</button>
@@ -525,6 +531,7 @@
         <button id="closeReplay" class="close">×</button>
         <h2>牌局回放</h2>
         <p id="replaySummary" class="hint"></p>
+        <div class="button-row replay-actions"><button id="btnShareReplay" class="ghost" type="button">分享回放摘要</button></div>
         <div id="replayList" class="replay-list"></div>
       </div>
     </dialog>
