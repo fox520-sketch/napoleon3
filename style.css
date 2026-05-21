@@ -1658,3 +1658,70 @@ body[data-theme="twilight"] .replay-play.winner {
   .update-banner div { justify-content: stretch; }
   .update-banner button { flex: 1; }
 }
+
+/* V29: presets, feedback toggles, diagnostics, mobile landscape */
+.tool-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.9rem 0 1.25rem;
+  padding: 1rem;
+  border-radius: 22px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow: 0 14px 34px rgba(18, 87, 113, 0.08);
+}
+.tool-card h3 { margin-bottom: 0.32rem; }
+.diagnostic-status { margin: 0.45rem 0 0; font-size: 0.9rem; line-height: 1.55; }
+.diag-grid { display: grid; gap: 0.45rem; margin-top: 0.45rem; }
+.diag-row {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: baseline;
+  padding: 0.48rem 0.62rem;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.56);
+}
+.diag-row b { color: var(--ink); }
+.diag-row span { color: var(--muted); }
+.diag-row.ok b { color: #23955a; }
+.diag-row.warn b { color: var(--gold); }
+body[data-theme="twilight"] .tool-card,
+body[data-theme="twilight"] .diag-row {
+  color: #eef3ff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(196, 205, 236, 0.18);
+}
+body[data-theme="twilight"] .diag-row b { color: #f5f7ff; }
+body[data-theme="twilight"] .diag-row span { color: #d3ddfb; }
+body[data-theme="twilight"] .diag-row.ok b { color: #a8f0c4; }
+body[data-theme="twilight"] .diag-row.warn b { color: #fff0c2; }
+
+@media (max-width: 720px) {
+  .tool-card { align-items: stretch; flex-direction: column; padding: 0.85rem; }
+  .tool-card button { width: 100%; }
+  .diag-row { grid-template-columns: 1fr; gap: 0.2rem; }
+}
+
+@media (orientation: landscape) and (max-height: 560px) and (max-width: 980px) {
+  body.in-game #app { width: min(100% - 10px, 1280px); padding-top: 6px; padding-bottom: 10px; }
+  body.in-game .game { grid-template-columns: 210px minmax(520px, 1fr) 82px; gap: 0.55rem; }
+  body.in-game .left-panel { padding: 0.62rem; }
+  body.in-game .right-panel { padding: 0.5rem; }
+  body.in-game .phase-card { padding: 0.72rem; margin-bottom: 0.55rem; }
+  body.in-game .contract { font-size: 0.82rem; }
+  body.in-game .table { min-height: min(72vh, 430px); }
+  body.in-game .hand-panel { padding: 0.55rem; }
+  body.in-game .hand { min-height: 62px; flex-wrap: nowrap; overflow-x: auto; }
+  body.in-game .card-btn { width: 42px; height: 58px; font-size: 0.72rem; }
+  body.in-game .seat { width: 118px; min-height: 58px; padding: 0.45rem; font-size: 0.72rem; }
+  body.in-game .seat-0 { bottom: 6px; }
+  body.in-game .seat-1 { right: 8px; bottom: 108px; }
+  body.in-game .seat-4 { left: 8px; bottom: 108px; }
+  body.in-game .seat-2 { right: 28px; top: 8px; }
+  body.in-game .seat-3 { left: 28px; top: 8px; }
+  body.in-game .log-summary { display: none; }
+}

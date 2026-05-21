@@ -39,6 +39,8 @@
           </select>
         </label>
         <label class="top-check" for="hintToggle"><input id="hintToggle" type="checkbox" /> 玩家提示</label>
+        <label class="top-check" for="soundToggle"><input id="soundToggle" type="checkbox" /> 音效</label>
+        <label class="top-check" for="vibrationToggle"><input id="vibrationToggle" type="checkbox" /> 震動</label>
         <button id="btnRules" class="ghost">玩法摘要</button>
         <button id="btnLeave" class="ghost hidden">離開房間</button>
       </div>
@@ -60,6 +62,17 @@
           <p class="hint">不用登入、不用房號，直接以你加 4 位電腦開始。本局只在此裝置進行。</p>
         </div>
         <div class="quick-actions">
+          <label class="mini-field">
+            <span>設定預設</span>
+            <select id="offlinePreset">
+              <option value="standard" selected>標準台式</option>
+              <option value="beginner">新手休閒</option>
+              <option value="challenge">高手挑戰</option>
+              <option value="napFriendly">拿破崙友善</option>
+              <option value="defStrong">聯合國強化</option>
+              <option value="test">AI 測試用</option>
+            </select>
+          </label>
           <label class="mini-field">
             <span>電腦難度</span>
             <select id="offlineDifficulty">
@@ -111,6 +124,15 @@
           <p id="aiTestStatus" class="ai-test-status">尚未執行測試。</p>
         </div>
         <button id="btnRunAiTest" class="ghost">執行 AI 測試</button>
+      </div>
+
+      <div class="tool-card">
+        <div>
+          <h3>系統測試工具</h3>
+          <p class="hint">檢查版本、PWA 快取、Service Worker、Firebase 狀態、瀏覽器功能與目前設定，方便確認手機是否吃到舊版。</p>
+          <p id="diagnosticStatus" class="diagnostic-status">尚未執行系統測試。</p>
+        </div>
+        <button id="btnRunDiagnostics" class="ghost">執行系統測試</button>
       </div>
 
       <h3 class="section-title">多人線上</h3>
@@ -170,6 +192,18 @@
         <div class="panel">
           <h3>規則設定</h3>
           <div class="settings-grid">
+            <label class="field">
+              <span>規則預設</span>
+              <select id="lobbyPreset">
+                <option value="standard" selected>標準台式</option>
+                <option value="beginner">新手休閒</option>
+                <option value="challenge">高手挑戰</option>
+                <option value="napFriendly">拿破崙友善</option>
+                <option value="defStrong">聯合國強化</option>
+                <option value="test">AI 測試用</option>
+              </select>
+              <small>套用後會自動調整難度、AI 風格與常用規則。</small>
+            </label>
             <label class="field">
               <span>電腦難度 <b id="difficultyLabel">10</b> / 20</span>
               <input id="difficulty" type="range" min="1" max="20" value="10" />

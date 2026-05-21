@@ -40,8 +40,8 @@ async function loadFirebaseSdk() {
   serverTimestamp = dbMod.serverTimestamp;
 }
 
-const APP_VERSION = "AI V28｜提示・回放・更新";
-const APP_BUILD = "2026-05-21-v28";
+const APP_VERSION = "AI V29｜預設・音效・測試工具";
+const APP_BUILD = "2026-05-21-v29";
 const $ = (id) => document.getElementById(id);
 const SUITS = {
   S: { sym: "♠", name: "黑桃", color: "black", order: 4 },
@@ -76,10 +76,20 @@ const STORAGE = {
   name: "napoleon.player.name.v1",
   logVisible: "napoleon.log.visible.v1",
   theme: "napoleon.theme.v1",
-  playerHints: "napoleon.player.hints.v1"
+  playerHints: "napoleon.player.hints.v1",
+  sound: "napoleon.sound.enabled.v1",
+  vibration: "napoleon.vibration.enabled.v1"
 };
 const THEME_OPTIONS = ["auto", "ocean", "eye-care", "e-ink", "forest", "grassland", "sakura", "twilight"];
 const THEME_PALETTE = THEME_OPTIONS.filter((theme) => theme !== "auto");
+const SETTING_PRESETS = {
+  standard: { label: "標準台式", difficulty: 12, aiStyle: "expert", buriedMode: "addContract", leadMode: "next", trumpMode: "suitOnly", jokerLowLast3: true, summonJokers: true, allowSelfSecretary: false, showAiThoughts: true, balanceTarget: "normal" },
+  beginner: { label: "新手休閒", difficulty: 7, aiStyle: "balanced", buriedMode: "addContract", leadMode: "next", trumpMode: "suitOnly", jokerLowLast3: true, summonJokers: true, allowSelfSecretary: false, showAiThoughts: false, balanceTarget: "easy-nap" },
+  challenge: { label: "高手挑戰", difficulty: 18, aiStyle: "expert", buriedMode: "addContract", leadMode: "next", trumpMode: "allowNoTrump", jokerLowLast3: true, summonJokers: true, allowSelfSecretary: false, showAiThoughts: true, balanceTarget: "normal" },
+  napFriendly: { label: "拿破崙友善", difficulty: 12, aiStyle: "aggressive", buriedMode: "addContract", leadMode: "napoleon", trumpMode: "suitOnly", jokerLowLast3: true, summonJokers: true, allowSelfSecretary: true, showAiThoughts: true, balanceTarget: "easy-nap" },
+  defStrong: { label: "聯合國強化", difficulty: 16, aiStyle: "blocker", buriedMode: "addContract", leadMode: "next", trumpMode: "suitOnly", jokerLowLast3: true, summonJokers: true, allowSelfSecretary: false, showAiThoughts: true, balanceTarget: "hard-nap" },
+  test: { label: "AI 測試用", difficulty: 20, aiStyle: "expert", buriedMode: "addContract", leadMode: "next", trumpMode: "allowNoTrump", jokerLowLast3: true, summonJokers: true, allowSelfSecretary: false, showAiThoughts: true, balanceTarget: "normal" }
+};
 
 const appState = {
   firebaseApp: null,
@@ -102,7 +112,9 @@ const appState = {
   offlineTimer: null,
   currentRoundResultKey: null,
   dismissedRoundResultKey: null,
-  waitingWorker: null
+  waitingWorker: null,
+  lastTurnNoticeKey: null,
+  audioContext: null
 };
 
 function init() {
@@ -118,7 +130,9 @@ function init() {
   }
 
   $("btnStartOffline").addEventListener("click", startOfflineGame);
+  $("offlinePreset")?.addEventListener("change", () => applyOfflinePresetFromUI(true));
   $("btnRunAiTest")?.addEventListener("click", runAiHealthCheck);
+  $("btnRunDiagnostics")?.addEventListener("click", runDiagnostics);
   $("btnConnect").addEventListener("click", connectFirebase);
   $("btnCreateRoom").addEventListener("click", createRoom);
   $("btnJoinRoom").addEventListener("click", joinRoomFromInput);
@@ -135,6 +149,9 @@ function init() {
   $("themeSelect").addEventListener("change", (event) => applyTheme(event.target.value, true));
   $("hintToggle")?.addEventListener("change", (event) => setPlayerHintsVisible(event.target.checked));
   applyPlayerHintsVisible(getPlayerHintsVisible());
+  $("soundToggle")?.addEventListener("change", (event) => setSoundEnabled(event.target.checked));
+  $("vibrationToggle")?.addEventListener("change", (event) => setVibrationEnabled(event.target.checked));
+  applyFeedbackSettings();
   $("closeReplay")?.addEventListener("click", () => $("replayDialog")?.close());
   $("resultReplay")?.addEventListener("click", () => openReplayDialog(appState.room?.game));
   $("btnReloadUpdate")?.addEventListener("click", reloadForUpdate);
@@ -144,6 +161,7 @@ function init() {
     $("difficultyLabel").textContent = $("difficulty").value;
     syncLobbySettingsSoon();
   });
+  $("lobbyPreset")?.addEventListener("change", () => applyLobbyPresetFromUI(true));
   for (const id of ["buriedMode", "leadMode", "trumpMode", "aiStyle", "jokerLowLast3", "summonJokers", "allowSelfSecretary", "showAiThoughts"]) {
     $(id).addEventListener("change", syncLobbySettingsSoon);
   }
@@ -580,6 +598,113 @@ function aiHealthSummaryHtml(summary) {
   `;
 }
 
+function applyOfflinePresetFromUI(notify = false) {
+  const presetId = $("offlinePreset")?.value || "standard";
+  const preset = SETTING_PRESETS[presetId] || SETTING_PRESETS.standard;
+  if ($("offlineDifficulty")) $("offlineDifficulty").value = String(preset.difficulty);
+  if ($("offlineAiStyle")) $("offlineAiStyle").value = preset.aiStyle;
+  if ($("aiBalanceTarget")) $("aiBalanceTarget").value = preset.balanceTarget || "normal";
+  if (notify) toast(`已套用：${preset.label}`);
+}
+
+function applyLobbyPresetFromUI(notify = false) {
+  const presetId = $("lobbyPreset")?.value || "standard";
+  const preset = SETTING_PRESETS[presetId] || SETTING_PRESETS.standard;
+  if ($("difficulty")) $("difficulty").value = String(preset.difficulty);
+  if ($("difficultyLabel")) $("difficultyLabel").textContent = String(preset.difficulty);
+  for (const [id, value] of Object.entries({ buriedMode: preset.buriedMode, leadMode: preset.leadMode, trumpMode: preset.trumpMode, aiStyle: preset.aiStyle })) {
+    if ($(id)) $(id).value = value;
+  }
+  for (const [id, value] of Object.entries({ jokerLowLast3: preset.jokerLowLast3, summonJokers: preset.summonJokers, allowSelfSecretary: preset.allowSelfSecretary, showAiThoughts: preset.showAiThoughts })) {
+    if ($(id)) $(id).checked = Boolean(value);
+  }
+  if (notify) toast(`已套用：${preset.label}`);
+  syncLobbySettingsSoon();
+}
+
+function isSoundEnabled() {
+  return localStorage.getItem(STORAGE.sound) === "1";
+}
+
+function isVibrationEnabled() {
+  return localStorage.getItem(STORAGE.vibration) === "1";
+}
+
+function setSoundEnabled(enabled) {
+  localStorage.setItem(STORAGE.sound, enabled ? "1" : "0");
+  applyFeedbackSettings();
+  if (enabled) playSfx("click");
+}
+
+function setVibrationEnabled(enabled) {
+  localStorage.setItem(STORAGE.vibration, enabled ? "1" : "0");
+  applyFeedbackSettings();
+  if (enabled) vibrate([18]);
+}
+
+function applyFeedbackSettings() {
+  if ($("soundToggle")) $("soundToggle").checked = isSoundEnabled();
+  if ($("vibrationToggle")) $("vibrationToggle").checked = isVibrationEnabled();
+}
+
+function playSfx(type = "click") {
+  if (!isSoundEnabled()) return;
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = appState.audioContext || new AudioContext();
+    appState.audioContext = ctx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const freq = type === "turn" ? 880 : type === "win" ? 1046 : type === "lose" ? 196 : 520;
+    osc.type = type === "lose" ? "sawtooth" : "sine";
+    osc.frequency.setValueAtTime(freq, now);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(type === "turn" ? 0.045 : 0.035, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + (type === "turn" ? 0.18 : 0.12));
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.22);
+  } catch (error) {
+    console.warn("Sound effect failed", error);
+  }
+}
+
+function vibrate(pattern = [24]) {
+  if (!isVibrationEnabled() || !navigator.vibrate) return;
+  try { navigator.vibrate(pattern); } catch {}
+}
+
+function maybeNotifyMyTurn(game) {
+  const seat = myGameSeat(game);
+  if (seat === null || game.phase === PHASE.ROUND_END || game.pendingClear) return;
+  const isMine = Number(game.currentPlayer) === Number(seat);
+  const key = isMine ? `${game.phase}:${game.trickNo || 0}:${game.currentPlayer}:${(game.trick || []).length}` : null;
+  if (!isMine || !key || appState.lastTurnNoticeKey === key) return;
+  appState.lastTurnNoticeKey = key;
+  playSfx("turn");
+  vibrate([40, 30, 40]);
+}
+
+async function runDiagnostics() {
+  const el = $("diagnosticStatus");
+  if (!el) return;
+  const checks = [];
+  const add = (name, ok, detail) => checks.push({ name, ok, detail });
+  add("目前版本", true, `${APP_VERSION}（${APP_BUILD}）`);
+  add("Service Worker", "serviceWorker" in navigator, "serviceWorker" in navigator ? "瀏覽器支援" : "瀏覽器不支援");
+  add("PWA 安裝資訊", Boolean(document.querySelector('link[rel="manifest"]')), "manifest.webmanifest 已掛載");
+  add("快取 API", "caches" in window, "caches" in window ? "可使用離線快取" : "不支援 Cache API");
+  add("Firebase 狀態", appState.connected, appState.connected ? `已連線，uid ${String(appState.firebaseUid || "").slice(0, 8)}…` : "尚未連線，多人前請先連線 Firebase");
+  add("本機儲存", (() => { try { localStorage.setItem("napoleon.diag", "1"); localStorage.removeItem("napoleon.diag"); return true; } catch { return false; } })(), "用於記住主題、提示與偏好");
+  add("音效/震動", true, `${isSoundEnabled() ? "音效開" : "音效關"}，${isVibrationEnabled() ? "震動開" : "震動關"}`);
+  const html = checks.map((item) => `<div class="diag-row ${item.ok ? "ok" : "warn"}"><b>${item.ok ? "✓" : "!"} ${escapeHtml(item.name)}</b><span>${escapeHtml(item.detail)}</span></div>`).join("");
+  el.innerHTML = `<div class="diag-grid">${html}</div>`;
+  playSfx("click");
+  vibrate([20]);
+}
+
 function startOfflineGame() {
   detachRoom();
   appState.offline = true;
@@ -852,7 +977,7 @@ function renderLobby() {
   applySettingsToUI(room.lobby?.settings || defaultSettings());
   const host = isHost();
   document.querySelectorAll(".host-only").forEach((el) => el.classList.toggle("hidden", !host));
-  for (const id of ["difficulty", "buriedMode", "leadMode", "trumpMode", "aiStyle", "jokerLowLast3", "summonJokers", "allowSelfSecretary", "showAiThoughts"]) {
+  for (const id of ["lobbyPreset", "difficulty", "buriedMode", "leadMode", "trumpMode", "aiStyle", "jokerLowLast3", "summonJokers", "allowSelfSecretary", "showAiThoughts"]) {
     $(id).disabled = !host;
   }
   const filled = ordered.filter(Boolean).length;
@@ -891,6 +1016,7 @@ function readSettingsFromUI() {
 }
 
 function applySettingsToUI(settings) {
+  if ($("lobbyPreset")) $("lobbyPreset").value = "standard";
   $("difficulty").value = settings.difficulty ?? 10;
   $("difficultyLabel").textContent = settings.difficulty ?? 10;
   $("buriedMode").value = settings.buriedMode || "addContract";
@@ -5187,6 +5313,10 @@ function renderRoundResultAnimation(game) {
 
   const playerTeam = teamOf(game, seat);
   const playerWon = result.winningTeam === playerTeam;
+  if (appState.currentRoundResultKey !== key) {
+    playSfx(playerWon ? "win" : "lose");
+    vibrate(playerWon ? [35, 30, 35, 30, 70] : [120]);
+  }
   const delta = result.scoreDeltas?.[seat] ?? 0;
   const teamName = playerTeam === "nap" ? "拿破崙軍" : "聯合國";
   const winnerName = result.winningTeam === "nap" ? "拿破崙軍" : "聯合國";
@@ -5210,6 +5340,7 @@ function renderGame() {
   const game = appState.room?.game;
   if (!game) return;
   normalizeGame(game);
+  maybeNotifyMyTurn(game);
   renderPhase(game);
   renderContract(game);
   renderTableTrump(game);
