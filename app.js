@@ -355,24 +355,51 @@ function aiAuditRoundTactics(game) {
   let controlWaste = 0;
   const details = [];
   for (const trick of game.trickHistory || []) {
+    const plays = trick.plays || [];
     const winnerTeam = team(trick.winner);
-    const heads = (trick.plays || []).filter((p) => isHeadCard(p.card)).length;
-    for (const play of trick.plays || []) {
+    const heads = plays.filter((p) => isHeadCard(p.card)).length;
+    let leader = null;
+    let leadSuit = aiLeadSuitFromPlays(plays);
+    for (const play of plays) {
       const card = play.card;
       if (!card) continue;
       const sameTeam = team(play.seat) === winnerTeam;
-      if (!sameTeam && isHeadCard(card)) headGifts += 1;
+      const isPoint = isHeadCard(card);
       const isControl = card.joker || card.id === game.secretaryCardId || (game.trump && game.trump !== "NT" && card.suit === game.trump && card.value >= 12);
-      if (!sameTeam && isControl && heads <= 1) controlWaste += 1;
+      const beforeTeam = leader === null ? null : team(leader.seat);
+      const playedIntoEnemy = beforeTeam && beforeTeam !== team(play.seat);
+      const ledUnsafeHead = leader === null && isPoint && !sameTeam;
+      const lateForced = (trick.trickNo || 0) >= 7 && isPoint;
+      const likelyForcedFollow = leadSuit && card.suit === leadSuit && isPoint && (trick.plays || []).filter((p) => p.seat === play.seat).length === 1;
+
+      // V18：健康檢查改成「可疑送頭」而不是把所有失去的頭都算成送頭。
+      // 領頭被反吃、對手已吃時仍丟頭、非末段不必要地送頭，才算較重警示。
+      if (!sameTeam && isPoint) {
+        let giftWeight = 0.55;
+        if (playedIntoEnemy) giftWeight += 0.45;
+        if (ledUnsafeHead) giftWeight += 0.35;
+        if (heads >= 3) giftWeight += 0.25;
+        if (lateForced) giftWeight -= 0.25;
+        if (likelyForcedFollow) giftWeight -= 0.15;
+        headGifts += Math.max(0.25, giftWeight);
+      }
+      if (!sameTeam && isControl && heads <= 1) {
+        let wasteWeight = 0.75;
+        if ((trick.trickNo || 0) >= 7) wasteWeight -= 0.25;
+        if (card.id === game.secretaryCardId || card.joker) wasteWeight += 0.3;
+        controlWaste += Math.max(0.25, wasteWeight);
+      }
+      if (leader === null || cardBeats(card, leader.card, game, leadSuit)) leader = play;
     }
     if (heads >= 3) details.push(`第 ${Number(trick.trickNo) + 1} 墩 ${game.players[trick.winner]?.name || "某玩家"} 收 ${heads} 頭。`);
   }
+  headGifts = Math.round(headGifts);
+  controlWaste = Math.round(controlWaste);
   const result = game.roundResult || {};
   const bidText = formatBid(game.bid || game.bidding?.highest);
-  const summary = `${bidText}，拿破崙軍 ${result.teamHeads ?? "?"}/${result.contract ?? "?"} 頭；送頭警示 ${headGifts}，控制牌浪費 ${controlWaste}。`;
+  const summary = `${bidText}，拿破崙軍 ${result.teamHeads ?? "?"}/${result.contract ?? "?"} 頭；可疑送頭 ${headGifts}，控制牌浪費 ${controlWaste}。`;
   return { headGifts, controlWaste, summary, details };
 }
-
 
 function aiHealthSummaryHtml(summary) {
   const rows = [
@@ -381,7 +408,7 @@ function aiHealthSummaryHtml(summary) {
     ["拿破崙達標率", `${Math.round(summary.madeRate * 100)}%`],
     ["平均成約", `${summary.avgContract.toFixed(1)} 頭`],
     ["平均拿破崙軍頭數", `${summary.avgNapHeads.toFixed(1)} 頭`],
-    ["送頭警示", `${summary.headGifts}`],
+    ["可疑送頭警示", `${summary.headGifts}`],
     ["控制牌浪費警示", `${summary.controlWaste}`]
   ];
   const detail = summary.samples.filter(Boolean).slice(0, 3).map((line) => `<li>${escapeHtml(line)}</li>`).join("");
@@ -2560,6 +2587,7 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
   score += aiV14StyleStrategyAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV15StrategicContinuityAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV16OpponentModelAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
+  score += aiV18HeadGiftShieldAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
 
   return score;
 }
@@ -3510,7 +3538,8 @@ function aiExplainPlayChoice(game, seat, card) {
   parts.push(...aiV14StyleNotes(game, seat, card, ctx));
   parts.push(...aiV15ContinuityNotes(game, seat, card, ctx));
   parts.push(...aiV16OpponentModelNotes(game, seat, card, ctx));
-  if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號、成約差、本局學習、AI風格、長局計畫與對手模型評分後選出");
+  parts.push(...aiV18HeadGiftShieldNotes(game, seat, card, ctx));
+  if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號、成約差、本局學習、AI風格、長局計畫、對手模型與送頭防護評分後選出");
   return `選 ${cardLong(card)}：${parts.slice(0, 3).join("；")}。`;
 }
 
