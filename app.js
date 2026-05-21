@@ -1321,6 +1321,12 @@ function cardStrength(card, game, leadSuit) {
   return card.value;
 }
 
+function cardBeats(card, otherCard, game, leadSuit) {
+  if (!card) return false;
+  if (!otherCard) return true;
+  return cardStrength(card, game, leadSuit) > cardStrength(otherCard, game, leadSuit);
+}
+
 function endRound(game) {
   const totals = calculateHeadTotals(game);
   const teamHeads = totals.teamHeads;
