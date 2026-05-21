@@ -40,8 +40,8 @@ async function loadFirebaseSdk() {
   serverTimestamp = dbMod.serverTimestamp;
 }
 
-const APP_VERSION = "AI V29｜預設・音效・測試工具";
-const APP_BUILD = "2026-05-21-v29";
+const APP_VERSION = "AI V30｜多人穩定・房主工具";
+const APP_BUILD = "2026-05-21-v30";
 const $ = (id) => document.getElementById(id);
 const SUITS = {
   S: { sym: "♠", name: "黑桃", color: "black", order: 4 },
@@ -78,7 +78,9 @@ const STORAGE = {
   theme: "napoleon.theme.v1",
   playerHints: "napoleon.player.hints.v1",
   sound: "napoleon.sound.enabled.v1",
-  vibration: "napoleon.vibration.enabled.v1"
+  vibration: "napoleon.vibration.enabled.v1",
+  lastRoom: "napoleon.last.room.v1",
+  lastRoomAt: "napoleon.last.room.at.v1"
 };
 const THEME_OPTIONS = ["auto", "ocean", "eye-care", "e-ink", "forest", "grassland", "sakura", "twilight"];
 const THEME_PALETTE = THEME_OPTIONS.filter((theme) => theme !== "auto");
@@ -127,6 +129,12 @@ function init() {
   if (roomFromUrl) {
     appState.autoJoinCode = roomFromUrl.toUpperCase();
     $("roomCode").value = appState.autoJoinCode;
+  } else {
+    const lastRoom = localStorage.getItem(STORAGE.lastRoom);
+    const lastAt = Number(localStorage.getItem(STORAGE.lastRoomAt) || 0);
+    if (lastRoom && Date.now() - lastAt < 1000 * 60 * 60 * 12) {
+      $("roomCode").placeholder = `上次房號 ${lastRoom}，可直接輸入加入`;
+    }
   }
 
   $("btnStartOffline").addEventListener("click", startOfflineGame);
@@ -143,6 +151,10 @@ function init() {
   applyLogVisibility(getLogVisible());
   $("btnAddBot").addEventListener("click", () => hostAddBot());
   $("btnRemoveBot").addEventListener("click", () => hostRemoveBot());
+  $("btnTakeOverOfflineLobby")?.addEventListener("click", hostTakeOverOfflinePlayers);
+  $("btnTakeOverOfflineGame")?.addEventListener("click", hostTakeOverOfflinePlayers);
+  $("btnCloseRoomLobby")?.addEventListener("click", hostCloseRoom);
+  $("btnCloseRoomGame")?.addEventListener("click", hostCloseRoom);
   $("btnStartGame").addEventListener("click", hostStartGame);
   $("btnRules").addEventListener("click", () => $("rulesDialog").showModal());
   $("closeRules").addEventListener("click", () => $("rulesDialog").close());
@@ -697,7 +709,9 @@ async function runDiagnostics() {
   add("PWA 安裝資訊", Boolean(document.querySelector('link[rel="manifest"]')), "manifest.webmanifest 已掛載");
   add("快取 API", "caches" in window, "caches" in window ? "可使用離線快取" : "不支援 Cache API");
   add("Firebase 狀態", appState.connected, appState.connected ? `已連線，uid ${String(appState.firebaseUid || "").slice(0, 8)}…` : "尚未連線，多人前請先連線 Firebase");
-  add("本機儲存", (() => { try { localStorage.setItem("napoleon.diag", "1"); localStorage.removeItem("napoleon.diag"); return true; } catch { return false; } })(), "用於記住主題、提示與偏好");
+  add("房間狀態", Boolean(appState.roomCode), appState.roomCode ? `${appState.roomCode}・${appState.room?.meta?.status || "未訂閱"}` : "目前未在房間內");
+  add("房主工具", true, isHost() ? "目前是房主，可接管離線玩家或關閉房間" : "非房主，只能操作自己的座位");
+  add("本機儲存", (() => { try { localStorage.setItem("napoleon.diag", "1"); localStorage.removeItem("napoleon.diag"); return true; } catch { return false; } })(), "用於記住主題、提示、上次房號與偏好");
   add("音效/震動", true, `${isSoundEnabled() ? "音效開" : "音效關"}，${isVibrationEnabled() ? "震動開" : "震動關"}`);
   const html = checks.map((item) => `<div class="diag-row ${item.ok ? "ok" : "warn"}"><b>${item.ok ? "✓" : "!"} ${escapeHtml(item.name)}</b><span>${escapeHtml(item.detail)}</span></div>`).join("");
   el.innerHTML = `<div class="diag-grid">${html}</div>`;
@@ -812,7 +826,16 @@ async function joinRoom(code) {
   const snap = await get(roomPath);
   if (!snap.exists()) return toast("找不到房間");
   const room = snap.val();
-  if (room.meta?.status !== "lobby") return toast("這個房間已開局，暫不支援中途加入");
+  if (room.meta?.status !== "lobby") {
+    const gamePlayer = room.game?.players?.find((p) => p?.uid === appState.uid);
+    const lobbySeat = Object.values(room.lobby?.seats || {}).find((seat) => seat?.uid === appState.uid);
+    if (gamePlayer || lobbySeat) {
+      await enterRoom(code);
+      toast(`已重新連回房間 ${code}`);
+      return;
+    }
+    return toast("這個房間已開局；只有原本座位可重連。可請房主把離線玩家改電腦。");
+  }
   const name = sanitizeName($("playerName").value);
   localStorage.setItem(STORAGE.name, name);
   const seatsRef = ref(appState.db, `rooms/${code}/lobby/seats`);
@@ -842,6 +865,8 @@ async function joinRoom(code) {
 async function enterRoom(code) {
   detachRoom();
   appState.roomCode = code;
+  localStorage.setItem(STORAGE.lastRoom, code);
+  localStorage.setItem(STORAGE.lastRoomAt, String(Date.now()));
   $("roomCode").value = code;
   const params = new URLSearchParams(location.search);
   params.set("room", code);
@@ -949,11 +974,14 @@ function renderRoom() {
     $("lobbyView").classList.remove("hidden");
     $("gameView").classList.add("hidden");
     renderLobby();
+    renderRoomStatusPanels();
   } else {
     $("lobbyView").classList.add("hidden");
     $("gameView").classList.remove("hidden");
     renderGame();
+    renderRoomStatusPanels();
   }
+  renderHostTools();
 }
 
 function renderLobby() {
@@ -970,7 +998,7 @@ function renderLobby() {
     if (!seat) return `<div class="lobby-seat"><div><b>座位 ${i + 1}</b><small>空位</small></div><span class="tag">等待</span></div>`;
     const mine = seat.uid === appState.uid ? "（你）" : "";
     const type = seat.type === "bot" ? "電腦" : "真人";
-    const online = seat.online === false ? "離線" : "在線";
+    const online = seat.online === false ? `離線${seat.lastSeen ? `・${timeAgo(seat.lastSeen)}` : ""}` : "在線";
     return `<div class="lobby-seat"><div><b>${escapeHtml(seat.name)}${mine}</b><small>座位 ${i + 1}・${type}・${online}</small></div><span class="tag ${seat.type === "bot" ? "gold" : ""}">${seat.score || 0} 分</span></div>`;
   }).join("");
 
@@ -985,6 +1013,119 @@ function renderLobby() {
   $("lobbyNotice").textContent = host
     ? (filled === 5 ? "座位已滿，可以開始。" : `目前 ${filled}/5 人，可等待朋友或補電腦。`)
     : "等待房主調整規則並開始。";
+}
+
+
+function renderRoomStatusPanels() {
+  const room = appState.room;
+  const lobbyEl = $("lobbyRoomStatus");
+  const gameEl = $("gameRoomStatus");
+  const html = room ? buildRoomStatusHtml(room) : "";
+  if (lobbyEl) {
+    lobbyEl.innerHTML = html;
+    lobbyEl.classList.toggle("hidden", !html);
+  }
+  if (gameEl) {
+    gameEl.innerHTML = html;
+    const show = Boolean(html) && !appState.offline;
+    gameEl.classList.toggle("hidden", !show);
+  }
+}
+
+function buildRoomStatusHtml(room) {
+  if (!room || appState.offline) return "";
+  const seats = room.lobby?.seats || {};
+  const values = Object.values(seats);
+  const humans = values.filter((seat) => seat?.type !== "bot");
+  const bots = values.filter((seat) => seat?.type === "bot");
+  const offlineHumans = humans.filter((seat) => seat?.online === false);
+  const hostSeat = values.find((seat) => seat?.uid === room.meta?.hostUid);
+  const updated = room.meta?.updatedAt ? timeAgo(room.meta.updatedAt) : "剛剛";
+  const state = room.meta?.status === "lobby" ? "大廳" : "遊戲中";
+  const hostName = hostSeat?.name || "房主";
+  const warning = offlineHumans.length
+    ? `<span class="room-warning">${offlineHumans.length} 位真人離線，可由房主改電腦接手。</span>`
+    : `<span class="room-ok">所有真人在線。</span>`;
+  return `
+    <div class="room-status-grid">
+      <span><b>${escapeHtml(state)}</b><small>房間狀態</small></span>
+      <span><b>${escapeHtml(hostName)}</b><small>房主</small></span>
+      <span><b>${humans.length} 真人 / ${bots.length} 電腦</b><small>座位</small></span>
+      <span><b>${escapeHtml(updated)}</b><small>最後同步</small></span>
+    </div>
+    ${warning}
+  `;
+}
+
+function renderHostTools() {
+  const host = isHost();
+  const hasRoom = Boolean(appState.room) && !appState.offline;
+  const hasOffline = countOfflineHumans() > 0;
+  for (const id of ["btnTakeOverOfflineLobby", "btnTakeOverOfflineGame"]) {
+    const btn = $(id);
+    if (btn) {
+      btn.disabled = !host || !hasRoom || !hasOffline;
+      btn.textContent = hasOffline ? `離線玩家改電腦（${hasOffline}）` : "離線玩家改電腦";
+    }
+  }
+  const gameTools = $("gameHostTools");
+  if (gameTools) gameTools.classList.toggle("hidden", !host || !hasRoom);
+}
+
+function countOfflineHumans() {
+  const seats = appState.room?.lobby?.seats || {};
+  return Object.values(seats).filter((seat) => seat?.type !== "bot" && seat?.online === false).length;
+}
+
+function timeAgo(value) {
+  let ms = Number(value);
+  if (!Number.isFinite(ms)) return "剛剛";
+  if (ms < 1000000000000) ms *= 1000;
+  const diff = Math.max(0, Date.now() - ms);
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "剛剛";
+  if (min < 60) return `${min} 分前`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} 小時前`;
+  return `${Math.floor(hr / 24)} 天前`;
+}
+
+async function hostTakeOverOfflinePlayers() {
+  if (!isHost() || !appState.room || appState.offline) return;
+  const room = appState.room;
+  const seats = { ...(room.lobby?.seats || {}) };
+  const game = room.game ? normalizeGame(JSON.parse(JSON.stringify(room.game))) : null;
+  let changed = 0;
+  const updates = { "meta/updatedAt": Date.now() };
+  for (const [key, seat] of Object.entries(seats)) {
+    if (!seat || seat.type === "bot" || seat.online !== false) continue;
+    const seatNo = Number(key);
+    const botName = `${seat.name || BOT_NAMES[seatNo % BOT_NAMES.length]}（電腦）`;
+    const botUid = `bot-takeover-${seatNo}-${Date.now()}-${changed}`;
+    const botSeat = { ...seat, uid: botUid, name: botName, type: "bot", online: true, takenOver: true, lastSeen: Date.now() };
+    updates[`lobby/seats/${seatNo}`] = botSeat;
+    if (game?.players?.[seatNo]) {
+      game.players[seatNo].uid = botUid;
+      game.players[seatNo].name = botName;
+      game.players[seatNo].type = "bot";
+    }
+    changed += 1;
+  }
+  if (!changed) return toast("目前沒有離線真人玩家");
+  if (game) updates.game = game;
+  await update(roomRef(), updates);
+  toast(`已讓 ${changed} 位離線玩家由電腦接手`);
+}
+
+async function hostCloseRoom() {
+  if (!isHost() || !appState.roomCode) return;
+  if (appState.offline) return leaveRoom(false);
+  const ok = window.confirm("確定關閉這個房間？所有玩家會離開，房間資料會從 Firebase 移除。");
+  if (!ok) return;
+  const code = appState.roomCode;
+  await remove(ref(appState.db, `rooms/${code}`));
+  toast("房間已關閉");
+  leaveRoom(false);
 }
 
 function defaultSettings() {

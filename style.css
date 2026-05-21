@@ -1725,3 +1725,92 @@ body[data-theme="twilight"] .diag-row.warn b { color: #fff0c2; }
   body.in-game .seat-3 { left: 28px; top: 8px; }
   body.in-game .log-summary { display: none; }
 }
+
+/* V30: multiplayer stability and host tools */
+.room-status-card {
+  margin-top: 0.75rem;
+  padding: 0.78rem;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow: 0 10px 22px rgba(18, 87, 113, 0.08);
+}
+.room-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin-bottom: 0.5rem;
+}
+.room-status-grid span {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+.room-status-grid b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+.room-status-grid small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+.room-ok,
+.room-warning {
+  display: inline-flex;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+.room-ok {
+  color: #216c42;
+  background: rgba(60, 179, 113, 0.14);
+  border: 1px solid rgba(60, 179, 113, 0.18);
+}
+.room-warning {
+  color: #8a5b0a;
+  background: rgba(214, 158, 46, 0.16);
+  border: 1px solid rgba(214, 158, 46, 0.24);
+}
+.host-tools {
+  margin-top: 0.85rem;
+  padding: 0.82rem;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.55);
+}
+.host-tools h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.96rem;
+}
+.host-tools .button-row { margin-top: 0.55rem; }
+.danger-ghost {
+  color: var(--danger);
+  border-color: rgba(217, 76, 92, 0.22);
+}
+.game-room-status {
+  margin-top: 1rem;
+  font-size: 0.9rem;
+}
+body[data-theme="twilight"] .room-status-card,
+body[data-theme="twilight"] .host-tools {
+  color: #eef3ff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(196, 205, 236, 0.18);
+}
+body[data-theme="twilight"] .room-status-grid b,
+body[data-theme="twilight"] .host-tools h4 { color: #f5f7ff; }
+body[data-theme="twilight"] .room-status-grid small { color: #d3ddfb; }
+body[data-theme="twilight"] .room-ok { color: #a8f0c4; background: rgba(94, 221, 151, 0.12); }
+body[data-theme="twilight"] .room-warning { color: #fff0c2; background: rgba(214, 158, 46, 0.14); }
+body[data-theme="twilight"] .danger-ghost { color: #ffbdca; border-color: rgba(255, 189, 202, 0.24); }
+
+@media (max-width: 720px) {
+  .room-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .host-tools .button-row { align-items: stretch; flex-direction: column; }
+  .host-tools button { width: 100%; }
+}

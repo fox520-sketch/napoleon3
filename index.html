@@ -167,6 +167,7 @@
           <p class="eyebrow">房間</p>
           <h2 id="lobbyRoomCode">----</h2>
           <p id="lobbyShare" class="hint"></p>
+          <div id="lobbyRoomStatus" class="room-status-card" aria-live="polite"></div>
         </div>
         <div class="invite-card" aria-label="房間邀請資訊">
           <img id="inviteQr" class="qr-code" alt="加入房間 QR Code" />
@@ -186,6 +187,14 @@
           <div class="button-row host-only hidden">
             <button id="btnAddBot" class="ghost">補一位電腦</button>
             <button id="btnRemoveBot" class="ghost">移除電腦</button>
+          </div>
+          <div class="host-tools host-only hidden">
+            <h4>房主工具</h4>
+            <p class="hint compact">朋友斷線時，可把離線真人座位交給電腦接手；公開測試結束可關閉房間。</p>
+            <div class="button-row">
+              <button id="btnTakeOverOfflineLobby" class="ghost" type="button">離線玩家改電腦</button>
+              <button id="btnCloseRoomLobby" class="ghost danger-ghost" type="button">關閉房間</button>
+            </div>
           </div>
         </div>
 
@@ -272,6 +281,15 @@
           <div id="scoreList"></div>
         </div>
         <div id="actionPanel" class="actions"></div>
+        <div id="gameRoomStatus" class="room-status-card game-room-status hidden" aria-live="polite"></div>
+        <div id="gameHostTools" class="host-tools host-only hidden">
+          <h4>多人維護</h4>
+          <p class="hint compact">若真人斷線卡住，房主可讓電腦接手離線座位。</p>
+          <div class="button-row">
+            <button id="btnTakeOverOfflineGame" class="ghost" type="button">接管離線玩家</button>
+            <button id="btnCloseRoomGame" class="ghost danger-ghost" type="button">關閉房間</button>
+          </div>
+        </div>
         <div id="playerTips" class="player-tips hidden"></div>
       </aside>
 
