@@ -114,6 +114,7 @@ function init() {
   }
 
   $("btnStartOffline").addEventListener("click", startOfflineGame);
+  $("btnRunAiTest")?.addEventListener("click", runAiHealthCheck);
   $("btnConnect").addEventListener("click", connectFirebase);
   $("btnCreateRoom").addEventListener("click", createRoom);
   $("btnJoinRoom").addEventListener("click", joinRoomFromInput);
@@ -253,6 +254,142 @@ function generateRoomCode() {
   let code = "";
   for (let i = 0; i < 5; i += 1) code += alphabet[Math.floor(Math.random() * alphabet.length)];
   return code;
+}
+
+
+function aiHealthSettingsFromUI() {
+  return {
+    ...defaultSettings(),
+    difficulty: Number($("offlineDifficulty")?.value || 16),
+    aiStyle: $("offlineAiStyle")?.value || "expert",
+    showAiThoughts: false
+  };
+}
+
+async function runAiHealthCheck() {
+  const button = $("btnRunAiTest");
+  const status = $("aiTestStatus");
+  if (!button || !status) return;
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = "測試中...";
+  status.textContent = "正在模擬全電腦對戰，請稍候。";
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const settings = aiHealthSettingsFromUI();
+    const summary = aiRunHealthSimulation(settings, 6);
+    status.innerHTML = aiHealthSummaryHtml(summary);
+    toast(`AI 健康檢查完成：${summary.healthScore} 分`);
+  } catch (error) {
+    console.error(error);
+    status.textContent = `AI 測試失敗：${error?.message || error}`;
+    toast("AI 測試失敗");
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
+function aiRunHealthSimulation(settings, rounds = 6) {
+  const aggregate = {
+    rounds,
+    completed: 0,
+    failed: 0,
+    napMade: 0,
+    totalContract: 0,
+    totalNapHeads: 0,
+    headGifts: 0,
+    controlWaste: 0,
+    overbid: 0,
+    noBid: 0,
+    loops: 0,
+    samples: []
+  };
+  let scores = [0, 0, 0, 0, 0];
+  for (let round = 0; round < rounds; round += 1) {
+    const players = Array.from({ length: 5 }, (_, seat) => ({ ...makeBotSeat(seat, seat + round), uid: `test-bot-${round}-${seat}` }));
+    const game = createGame(players, settings, round % 5, scores);
+    game.settings = { ...settings, showAiThoughts: false };
+    let guard = 0;
+    while (game.phase !== PHASE.ROUND_END && guard < 900) {
+      guard += 1;
+      if (game.pendingClear) {
+        game.pendingClear.until = 0;
+        clearPendingTrickIfReady(game);
+        continue;
+      }
+      const action = getBotAction(game);
+      if (!action || !applyAction(game, action)) break;
+    }
+    aggregate.loops += guard;
+    if (game.phase !== PHASE.ROUND_END) {
+      aggregate.failed += 1;
+      aggregate.samples.push(`第 ${round + 1} 局未能完成，停在 ${game.phase || "未知階段"}。`);
+      continue;
+    }
+    scores = game.players.map((p) => p.score || 0);
+    aggregate.completed += 1;
+    const totals = calculateHeadTotals(game);
+    aggregate.napMade += game.roundResult?.made ? 1 : 0;
+    aggregate.totalContract += totals.contract || 0;
+    aggregate.totalNapHeads += totals.teamHeads || 0;
+    if (!game.bidding?.highest) aggregate.noBid += 1;
+    if ((game.bid?.amount || game.bidAmount || 0) >= 13 && totals.teamHeads < (totals.contract || 0) - 2) aggregate.overbid += 1;
+    const audit = aiAuditRoundTactics(game);
+    aggregate.headGifts += audit.headGifts;
+    aggregate.controlWaste += audit.controlWaste;
+    if (aggregate.samples.length < 4) aggregate.samples.push(audit.summary);
+  }
+  const completed = Math.max(1, aggregate.completed);
+  const penalty = aggregate.failed * 12 + aggregate.headGifts * 1.8 + aggregate.controlWaste * 2.4 + aggregate.overbid * 5 + aggregate.noBid * 2;
+  aggregate.healthScore = Math.max(45, Math.min(99, Math.round(100 - penalty / completed)));
+  aggregate.avgContract = aggregate.totalContract / completed;
+  aggregate.avgNapHeads = aggregate.totalNapHeads / completed;
+  aggregate.madeRate = aggregate.napMade / completed;
+  return aggregate;
+}
+
+function aiAuditRoundTactics(game) {
+  const team = (seat) => seat === game.napoleon || seat === game.secretaryOwner ? "nap" : "def";
+  let headGifts = 0;
+  let controlWaste = 0;
+  const details = [];
+  for (const trick of game.trickHistory || []) {
+    const winnerTeam = team(trick.winner);
+    const heads = (trick.plays || []).filter((p) => isHeadCard(p.card)).length;
+    for (const play of trick.plays || []) {
+      const card = play.card;
+      if (!card) continue;
+      const sameTeam = team(play.seat) === winnerTeam;
+      if (!sameTeam && isHeadCard(card)) headGifts += 1;
+      const isControl = card.joker || card.id === game.secretaryCardId || (game.trump && game.trump !== "NT" && card.suit === game.trump && card.value >= 12);
+      if (!sameTeam && isControl && heads <= 1) controlWaste += 1;
+    }
+    if (heads >= 3) details.push(`第 ${Number(trick.trickNo) + 1} 墩 ${game.players[trick.winner]?.name || "某玩家"} 收 ${heads} 頭。`);
+  }
+  const result = game.roundResult || {};
+  const bidText = formatBid(game.bid || game.bidding?.highest);
+  const summary = `${bidText}，拿破崙軍 ${result.teamHeads ?? "?"}/${result.contract ?? "?"} 頭；送頭警示 ${headGifts}，控制牌浪費 ${controlWaste}。`;
+  return { headGifts, controlWaste, summary, details };
+}
+
+
+function aiHealthSummaryHtml(summary) {
+  const rows = [
+    ["健康分數", `${summary.healthScore} / 100`],
+    ["完成局數", `${summary.completed}/${summary.rounds}`],
+    ["拿破崙達標率", `${Math.round(summary.madeRate * 100)}%`],
+    ["平均成約", `${summary.avgContract.toFixed(1)} 頭`],
+    ["平均拿破崙軍頭數", `${summary.avgNapHeads.toFixed(1)} 頭`],
+    ["送頭警示", `${summary.headGifts}`],
+    ["控制牌浪費警示", `${summary.controlWaste}`]
+  ];
+  const detail = summary.samples.filter(Boolean).slice(0, 3).map((line) => `<li>${escapeHtml(line)}</li>`).join("");
+  return `
+    <span class="ai-health-score ${summary.healthScore >= 85 ? "good" : summary.healthScore >= 70 ? "ok" : "warn"}">${summary.healthScore} 分</span>
+    <div class="ai-health-grid">${rows.map(([k, v]) => `<span>${escapeHtml(k)}</span><b>${escapeHtml(v)}</b>`).join("")}</div>
+    <ul class="ai-health-notes">${detail}</ul>
+  `;
 }
 
 function startOfflineGame() {
