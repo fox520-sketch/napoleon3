@@ -58,6 +58,31 @@
         <div class="wave">♠ ♥ ♦ ♣</div>
       </div>
 
+      <div class="public-start-card" aria-label="快速開始">
+        <div class="public-start-head">
+          <div>
+            <p class="eyebrow">Quick Start</p>
+            <h3>快速開始</h3>
+            <p class="hint compact">不知道怎麼選？用下面三個入口即可。新手建議先開玩家提示；多人則先連線 Firebase。</p>
+          </div>
+          <button id="btnOpenReleaseNotes" class="ghost" type="button">本版更新</button>
+        </div>
+        <div class="quick-mode-grid">
+          <button id="btnQuickBeginner" class="quick-mode" type="button">
+            <b>新手直接玩</b>
+            <span>套用新手休閒＋玩家提示，立即離線開局。</span>
+          </button>
+          <button id="btnQuickStandard" class="quick-mode" type="button">
+            <b>標準單人局</b>
+            <span>標準台式規則與 AI，直接開始一局。</span>
+          </button>
+          <button id="btnQuickMultiplayer" class="quick-mode" type="button">
+            <b>邀請朋友</b>
+            <span>跳到多人區，連線 Firebase 後建立房間與 QR Code。</span>
+          </button>
+        </div>
+      </div>
+
       <div class="quick-start">
         <div>
           <h3>單人離線</h3>
@@ -149,6 +174,8 @@
           <button id="btnExportLocalData" class="ghost" type="button">匯出資料</button>
           <button id="btnImportLocalData" class="ghost" type="button">還原資料</button>
           <button id="btnCopyErrorReport" class="ghost" type="button">複製錯誤回報</button>
+          <button id="btnCopySupportBundle" class="ghost" type="button">複製維護包</button>
+          <button id="btnClearPwaCache" class="ghost" type="button">清除舊快取</button>
           <button id="btnResetLocalData" class="ghost danger-ghost" type="button">重設本機資料</button>
         </div>
       </div>
@@ -391,6 +418,24 @@
         <div class="button-row dialog-actions">
           <button id="btnApplyImportData" class="primary" type="button">還原資料</button>
           <button id="btnPasteCurrentBackup" class="ghost" type="button">填入目前備份</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="releaseNotesDialog" class="release-dialog">
+      <div class="dialog-body release-body">
+        <button id="closeReleaseNotes" class="close" type="button">×</button>
+        <p class="eyebrow">版本更新</p>
+        <h2>AI V34：公開首頁・快速開始・維護包</h2>
+        <ul class="release-list">
+          <li><b>快速開始：</b>新手、標準單人、多人邀請三個入口。</li>
+          <li><b>維護包：</b>一鍵複製版本、瀏覽器、設定、錯誤與統計摘要，方便回報問題。</li>
+          <li><b>快取修復：</b>手機吃到舊版時，可清除舊 PWA 快取並重新載入。</li>
+          <li><b>公開版首頁：</b>首頁資訊整理得更像正式入口。</li>
+        </ul>
+        <div class="button-row dialog-actions">
+          <button id="btnCopySupportBundleInDialog" class="ghost" type="button">複製維護包</button>
+          <button id="btnClearPwaCacheInDialog" class="ghost" type="button">清除舊快取</button>
         </div>
       </div>
     </dialog>

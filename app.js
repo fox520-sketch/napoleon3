@@ -40,8 +40,8 @@ async function loadFirebaseSdk() {
   serverTimestamp = dbMod.serverTimestamp;
 }
 
-const APP_VERSION = "AI V33｜導覽・分享・備份";
-const APP_BUILD = "2026-05-21-v33";
+const APP_VERSION = "AI V34｜公開首頁・快速開始・維護包";
+const APP_BUILD = "2026-05-21-v34";
 const ROOM_TTL_MS = 1000 * 60 * 60 * 24;
 const ROOM_STALE_MS = 1000 * 60 * 60 * 12;
 const $ = (id) => document.getElementById(id);
@@ -152,6 +152,10 @@ function init() {
   $("btnExportLocalData")?.addEventListener("click", exportLocalData);
   $("btnImportLocalData")?.addEventListener("click", openImportDataDialog);
   $("btnCopyErrorReport")?.addEventListener("click", copyErrorReport);
+  $("btnCopySupportBundle")?.addEventListener("click", copySupportBundle);
+  $("btnCopySupportBundleInDialog")?.addEventListener("click", copySupportBundle);
+  $("btnClearPwaCache")?.addEventListener("click", clearPwaCachesAndReload);
+  $("btnClearPwaCacheInDialog")?.addEventListener("click", clearPwaCachesAndReload);
   $("btnResetLocalData")?.addEventListener("click", resetLocalData);
   $("btnConnect").addEventListener("click", connectFirebase);
   $("btnCreateRoom").addEventListener("click", createRoom);
@@ -173,6 +177,11 @@ function init() {
   $("btnCloseRoomGame")?.addEventListener("click", hostCloseRoom);
   $("btnStartGame").addEventListener("click", hostStartGame);
   $("btnOnboarding")?.addEventListener("click", () => showOnboardingDialog(true));
+  $("btnOpenReleaseNotes")?.addEventListener("click", openReleaseNotesDialog);
+  $("closeReleaseNotes")?.addEventListener("click", () => $("releaseNotesDialog")?.close());
+  $("btnQuickBeginner")?.addEventListener("click", quickStartBeginner);
+  $("btnQuickStandard")?.addEventListener("click", quickStartStandard);
+  $("btnQuickMultiplayer")?.addEventListener("click", scrollToMultiplayerStart);
   $("closeOnboarding")?.addEventListener("click", () => finishOnboarding(false));
   $("btnStartAfterGuide")?.addEventListener("click", () => finishOnboarding(false));
   $("btnEnableHintsFromGuide")?.addEventListener("click", () => { setPlayerHintsVisible(true); finishOnboarding(false); });
@@ -1051,6 +1060,95 @@ function restoreLocalDataFromDialog() {
   if (name && $("playerName")) $("playerName").value = name;
   $("importDataDialog")?.close();
   toast("已還原本機資料");
+}
+
+function openReleaseNotesDialog() {
+  const dialog = $("releaseNotesDialog");
+  if (!dialog) return;
+  try { dialog.showModal(); }
+  catch { dialog.setAttribute("open", ""); }
+}
+
+function quickStartBeginner() {
+  if ($("offlinePreset")) $("offlinePreset").value = "beginner";
+  applyOfflinePresetFromUI(false);
+  setPlayerHintsVisible(true);
+  toast("已套用新手休閒與玩家提示");
+  startOfflineGame();
+}
+
+function quickStartStandard() {
+  if ($("offlinePreset")) $("offlinePreset").value = "standard";
+  applyOfflinePresetFromUI(false);
+  toast("已套用標準台式");
+  startOfflineGame();
+}
+
+function scrollToMultiplayerStart() {
+  $("playerName")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  setStatus("多人模式：先連線 Firebase，再建立新房或輸入房號加入。建立後可複製邀請連結或掃描 QR Code。");
+  toast("已跳到多人設定");
+}
+
+function buildSupportBundle() {
+  const stats = loadLocalStats();
+  const errors = loadErrorLog().slice(0, 8);
+  const maintenance = currentRoomMaintenanceStatus();
+  const bundle = {
+    app: "拿破崙與秘書",
+    version: APP_VERSION,
+    build: APP_BUILD,
+    url: location.href,
+    time: new Date().toISOString(),
+    userAgent: navigator.userAgent,
+    theme: localStorage.getItem(STORAGE.theme) || "ocean",
+    playerHints: getPlayerHintsVisible(),
+    sound: isSoundEnabled(),
+    vibration: isVibrationEnabled(),
+    online: navigator.onLine,
+    firebaseConnected: appState.connected,
+    room: appState.roomCode ? {
+      code: appState.roomCode,
+      status: appState.room?.meta?.status || null,
+      isHost: isHost(),
+      maintenance: maintenance.detail
+    } : null,
+    localStats: {
+      games: stats.games || 0,
+      wins: stats.wins || 0,
+      losses: stats.losses || 0,
+      napGames: stats.napGames || 0,
+      napWins: stats.napWins || 0,
+      defGames: stats.defGames || 0,
+      defWins: stats.defWins || 0,
+      totalScoreDelta: stats.totalScoreDelta || 0,
+      recent: (stats.recent || []).slice(0, 5)
+    },
+    recentErrors: errors
+  };
+  return JSON.stringify(bundle, null, 2);
+}
+
+async function copySupportBundle() {
+  await copyText(buildSupportBundle(), "已複製維護包");
+}
+
+async function clearPwaCachesAndReload() {
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((reg) => reg.unregister()));
+    }
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+    toast("已清除舊快取，正在重新載入");
+    window.setTimeout(() => window.location.reload(), 650);
+  } catch (error) {
+    console.error(error);
+    toast("清除快取失敗，請手動重新整理");
+  }
 }
 
 async function runDiagnostics() {

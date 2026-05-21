@@ -1,4 +1,4 @@
-const CACHE_NAME = "napoleon-secretary-v33-guide-share-backup";
+const CACHE_NAME = "napoleon-secretary-v34-public-start-support";
 const ASSETS = [
   "./",
   "./index.html",
