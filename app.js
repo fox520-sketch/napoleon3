@@ -315,7 +315,7 @@ function aiRunHealthSimulation(settings, rounds = 6) {
     samples: [],
     swingRounds: 0,
     closeRounds: 0,
-    healthVersion: "AI V25"
+    healthVersion: "AI V26"
   };
   let scores = [0, 0, 0, 0, 0];
   for (let round = 0; round < rounds; round += 1) {
@@ -383,9 +383,10 @@ function aiRunHealthSimulation(settings, rounds = 6) {
   const balanceScorePenalty = balanceGap * (aggregate.closeRate >= 0.35 ? 10 : 16);
   aggregate.healthScore = Math.max(45, Math.min(99, Math.round(100 - penalty / completed - balanceScorePenalty + Math.min(4, aggregate.blockStops / completed))));
   aggregate.confidenceLabel = rounds >= 30 ? "高信度" : (rounds >= 18 ? "穩定" : (rounds >= 12 ? "標準" : "快速"));
-  aggregate.balanceNote = aiV25BalanceNote(aggregate.madeRate, targetRange, aggregate);
-  aggregate.attackDefenseNote = aiV25AttackDefenseNote(aggregate, targetRange);
-  aggregate.autoSuggestion = aiV25TuningSuggestion(aggregate, targetRange);
+  aggregate.balanceNote = aiV26BalanceNote(aggregate.madeRate, targetRange, aggregate);
+  aggregate.attackDefenseNote = aiV26AttackDefenseNote(aggregate, targetRange);
+  aggregate.autoSuggestion = aiV26TuningSuggestion(aggregate, targetRange);
+  aggregate.overbidNote = aiV26OverbidNote(aggregate);
   aggregate.suspiciousHeadGifts = (aggregate.avoidableHeadGifts || 0) + (aggregate.forcedHeadGifts || 0);
   aggregate.preventableRatio = aggregate.suspiciousHeadGifts ? (aggregate.avoidableHeadGifts || 0) / aggregate.suspiciousHeadGifts : 0;
   aggregate.reportNote = aggregate.avoidableHeadGifts <= 12
@@ -554,6 +555,8 @@ function aiHealthSummaryHtml(summary) {
     ["低成本擋約", `${summary.lowCostBlocks || 0}`],
     ["接近成敗線", `${summary.closeRounds || 0} 局`],
     ["控制牌浪費警示", `${summary.controlWaste}`],
+    ["叫牌過高警示", `${summary.overbid || 0}`],
+    ["叫牌判讀", summary.overbidNote || "-"],
     ["送頭判讀", summary.reportNote || "-"],
     ["攻防建議", summary.attackDefenseNote || "-"],
     ["自動建議", summary.autoSuggestion || "-"]
@@ -1621,6 +1624,9 @@ function aiBidAction(game, seat) {
 
   const auction = aiV9AuctionDiscipline(game, seat, profile, legalAll, highest, difficulty, personality);
   if (auction.forcePass) return { uid: player.uid, seat, type: "pass", payload: { aiReason: auction.reason } };
+  const v26Bid = aiV26BidCalibration(game, seat, profile, legalAll, highest, difficulty, personality, auction);
+  if (v26Bid.forcePass) return { uid: player.uid, seat, type: "pass", payload: { aiReason: v26Bid.reason } };
+  if (Number.isFinite(v26Bid.maxComfortBid)) auction.maxComfortBid = Math.min(auction.maxComfortBid, v26Bid.maxComfortBid);
 
   const safeLegal = legalAll.filter((b) => b.amount <= Math.min(profile.ceiling, auction.maxComfortBid));
   const minimumNeeded = legalAll[0];
@@ -1652,6 +1658,7 @@ function aiBidAction(game, seat) {
   const jumpIntent = aiClamp((profile.confidence - 0.58) * 0.55 + (difficulty - 12) * 0.018 + roomAbove * 0.045 + personality.bidBias * 0.08, 0, 0.50);
   if (roomAbove >= 2 && Math.random() < jumpIntent) chosenAmount = Math.min(profile.ceiling, chosenAmount + 1);
   if (roomAbove >= 4 && profile.confidence > 0.76 && difficulty >= 17 && Math.random() < 0.18) chosenAmount = Math.min(profile.ceiling, chosenAmount + 1);
+  chosenAmount = aiV26ChooseBidAmount(game, seat, profile, chosenAmount, legalAmounts, highest, difficulty, personality);
   if (!byAmount.has(chosenAmount)) chosenAmount = legalAmounts.filter((n) => n <= chosenAmount).pop() || legalAmounts[0];
 
   const candidates = byAmount.get(chosenAmount) || safeLegal;
@@ -2748,6 +2755,7 @@ function aiAdvancedPlayAdjustment(game, seat, card, ctx, legal) {
   score += aiV23MicroBalanceAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV24NapoleonCommanderAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
   score += aiV25NapoleonPracticalBoostAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
+  score += aiV26BidAndTempoAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) * skill;
 
   return score;
 }
@@ -4337,6 +4345,193 @@ function aiV25NapoleonPracticalBoostNotes(game, seat, card, ctx) {
   return notes.slice(0, 2);
 }
 
+
+function aiV26BidCalibration(game, seat, profile, legalAll, highest, difficulty, personality, auction) {
+  const minBid = legalAll[0] || null;
+  const minAmount = Number(minBid?.amount || 0);
+  const bestFit = minBid ? (profile.expectedBySuit?.[minBid.suit] ?? profile.expectedHeads) : profile.expectedHeads;
+  const bestDetail = profile.suitDetails?.[profile.bestSuit] || { count: 0, pointCount: 0 };
+  const controls = Number(profile.jokers || 0) + Math.min(2, Number(bestDetail.topCount || 0)) * 0.35 + Math.min(2, Number(bestDetail.pointCount || 0)) * 0.22;
+  let maxComfortBid = Math.max(9, Math.floor(profile.expectedHeads + profile.confidence * 0.48 + personality.bidBias * 0.25));
+
+  // AI V26：叫牌校正。13 以上需要更紮實的期望頭數、王牌長度與控制牌，避免拿破崙被高成約拖垮。
+  if (difficulty >= 13) {
+    if ((profile.expectedHeads || 0) < 12.05 && maxComfortBid >= 13) maxComfortBid = 12;
+    if (bestDetail.count < 5 && Number(profile.jokers || 0) === 0 && maxComfortBid >= 13) maxComfortBid = 12;
+    if (bestDetail.count < 4 && maxComfortBid >= 12) maxComfortBid = 11;
+  }
+  if (difficulty >= 15 && minAmount >= 13) {
+    const requiredMargin = minAmount === 13 ? 0.72 : 1.05;
+    const suitMargin = bestFit - minAmount;
+    const hasEnoughControls = controls >= (minAmount >= 14 ? 1.35 : 0.95);
+    const strongFit = bestDetail.count >= 5 || Number(profile.jokers || 0) >= 1;
+    if ((profile.expectedHeads < minAmount + requiredMargin || suitMargin < 0.15 || !hasEnoughControls || !strongFit) && profile.confidence < 0.84) {
+      return {
+        forcePass: true,
+        maxComfortBid,
+        reason: `V26叫牌校正：${minAmount}頭以上需要更高期望與控制牌，目前估 ${profile.expectedHeads.toFixed(1)} 頭，避免高叫。`
+      };
+    }
+  }
+  if (difficulty >= 16 && highest && minAmount >= 12 && (game.bidding?.consecutivePasses || 0) >= 2) {
+    const premium = profile.expectedHeads - minAmount;
+    if (premium < 0.55 && profile.confidence < 0.72) {
+      return {
+        forcePass: true,
+        maxComfortBid,
+        reason: `V26競價紀律：已有多家 Pass，估 ${profile.expectedHeads.toFixed(1)} 頭沒有明顯超值，不重新推高成約。`
+      };
+    }
+  }
+  return { forcePass: false, maxComfortBid, reason: "" };
+}
+
+function aiV26ChooseBidAmount(game, seat, profile, chosenAmount, legalAmounts, highest, difficulty, personality) {
+  if (!legalAmounts?.length) return chosenAmount;
+  let amount = chosenAmount;
+  const bestDetail = profile.suitDetails?.[profile.bestSuit] || { count: 0, pointCount: 0 };
+  const expected = Number(profile.expectedHeads || 0);
+  const controls = Number(profile.jokers || 0) + Math.min(2, Number(bestDetail.pointCount || 0)) * 0.22;
+  if (difficulty >= 13) {
+    const cap = Math.floor(expected + profile.confidence * 0.42 + personality.bidBias * 0.20 + (bestDetail.count >= 6 ? 0.25 : 0));
+    amount = Math.min(amount, Math.max(legalAmounts[0], cap));
+  }
+  if (difficulty >= 15 && amount >= 13) {
+    const safe13 = expected >= 13.55 && (bestDetail.count >= 5 || profile.jokers >= 1) && controls >= 1.0;
+    const safe14 = expected >= 14.25 && bestDetail.count >= 5 && controls >= 1.45;
+    if (amount >= 14 && !safe14) amount = 13;
+    if (amount >= 13 && !safe13) amount = 12;
+  }
+  const legal = legalAmounts.filter((n) => n <= amount).pop();
+  return legal || legalAmounts[0];
+}
+
+function aiV26OverbidNote(summary) {
+  const overbid = Number(summary.overbid || 0);
+  const avgContract = Number(summary.avgContract || 0);
+  const avgHeads = Number(summary.avgNapHeads || 0);
+  if (overbid >= Math.max(3, (summary.completed || 1) * 0.10)) return "13頭以上叫品失敗偏多，V26 會更嚴格校正高叫。";
+  if (avgContract - avgHeads > 1.5) return "平均成約略高於拿破崙可完成頭數，V26 會優先降低冒進叫牌。";
+  return "叫牌風險可接受，V26 保留小幅競價但避免高叫拖垮。";
+}
+
+function aiV26BalanceNote(madeRate, target, summary = {}) {
+  const diff = (summary.avgNapHeads || 0) - (summary.avgContract || 0);
+  if (madeRate < target.low - 0.08) return diff >= -1.6 ? "聯合國偏強，V26 會先校正高叫並強化拿破崙中盤控局" : "聯合國明顯偏強，V26 會降低冒進成約並提高秘書中盤救局";
+  if (madeRate < target.low) return "拿破崙略偏難，V26 會讓拿破崙叫得更準、差1–2頭時更早追頭。";
+  if (madeRate > target.high + 0.08) return "拿破崙偏強，V26 保留聯合國關鍵擋約避免失衡。";
+  if (madeRate > target.high) return "拿破崙略強，V26 會限制非必要控制牌衝刺。";
+  return "攻防落在目標區間，V26 維持叫牌校正與拿破崙控局。";
+}
+
+function aiV26AttackDefenseNote(summary, target) {
+  const madeRate = summary.madeRate || 0;
+  const gap = (summary.avgContract || 0) - (summary.avgNapHeads || 0);
+  if (madeRate < target.low) {
+    if ((summary.overbid || 0) > 0 || gap > 1.4) return "拿破崙偏難：V26 會降低13頭以上冒進叫品，並強化中後盤抽王牌/建立長門。";
+    return "拿破崙常差一點：V26 會提高中盤控局、秘書救局與安全追頭。";
+  }
+  if (madeRate > target.high) return "拿破崙偏強：保留聯合國在成約線附近的低成本擋約。";
+  return "攻防平衡：叫牌、控局與秘書救局權重可維持。";
+}
+
+function aiV26TuningSuggestion(summary, target) {
+  const madeRate = summary.madeRate || 0;
+  const closeRate = summary.closeRate || 0;
+  if (madeRate < target.low) {
+    if ((summary.avgContract || 0) >= 12.2 && (summary.avgNapHeads || 0) < (summary.avgContract || 0) - 1.0) return "優先改善叫牌：13頭以上需更嚴格，拿破崙中盤要更早抽王牌與兌現安全頭。";
+    if (closeRate >= 0.30) return "拿破崙接近成功，建議保留 V26 秘書中盤救局與控牌兌現。";
+    return "拿破崙進攻窗口不足，可提高拿破崙/秘書救局權重或改成拿破崙友善目標測試。";
+  }
+  if (madeRate > target.high) return "拿破崙已偏強，建議降低進攻型 AI 風格或改成拿破崙挑戰目標。";
+  return "建議用 36 局高信度測試確認；若達標率穩定在 45–60%，可視為平衡。";
+}
+
+function aiV26BidAndTempoAdjustment(game, seat, card, ctx, legal, candidateWins, pointsWithCard) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  const weight = aiClamp((difficulty - 7) / 13, 0, 1.5);
+  if (!weight || !card || !ctx || game.napoleon === null || game.napoleon === undefined) return 0;
+  const trickLen = game.trick?.length || 0;
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const isPoint = isHeadCard(card);
+  const isTrump = Boolean(game.trump && game.trump !== "NT" && card.suit === game.trump);
+  const isJoker = Boolean(card.joker);
+  const isSecretCard = !game.secretaryRevealed && card.id === game.secretaryCardId;
+  const control = aiControlCardValue(game, seat, card, ctx);
+  const remainingHeads = Math.max(1, ctx.remainingHeads || 1);
+  const napNeeds = Math.max(0, ctx.napNeeds || 0);
+  const shortage = Math.max(0, (ctx.contract || 0) - (ctx.napHeads || 0));
+  const near = napNeeds >= 1 && napNeeds <= Math.max(4, Math.ceil(remainingHeads * 0.42));
+  const behindButLive = shortage >= 2 && napNeeds <= Math.max(8, Math.ceil(remainingHeads * 0.80));
+  const late = Boolean(ctx.late || (ctx.handSize || 0) <= 4 || (game.trickNo || 0) >= 6);
+  const currentEnemyWinning = trickLen > 0 && ctx.currentWinnerTeam && ctx.currentWinnerTeam !== ctx.myTeam;
+  const currentAllyWinning = trickLen > 0 && ctx.currentWinnerTeam === ctx.myTeam;
+  let score = 0;
+
+  if (ctx.myTeam === "nap") {
+    // V26：拿破崙不是盲目衝，而是在差1–3頭或中盤可救時，兌現真正守得住的頭牌/控制牌。
+    if ((near || behindButLive || late) && (candidateWins || projection.holdProb >= 0.58)) {
+      if (pointsWithCard > 0) score += 16 + pointsWithCard * 5 + (near ? 6 : 0);
+      if (control >= 10) score += 7 + (late ? 4 : 0);
+      if (isJoker && pointsWithCard >= 1) score += 6;
+    }
+
+    // V26：拿破崙本人首攻/中盤控局。落後時用中小王牌探抽，不只等最後救火。
+    if (seat === game.napoleon && trickLen === 0) {
+      const master = card.suit ? aiIsLikelyMaster(game, seat, card, card.suit, ctx.memory) : (isJoker || isSecretCard);
+      if (isTrump && behindButLive && projection.enemyCutPressure < 0.72) score += isPoint ? 9 : 14;
+      if (isPoint && (master || projection.holdProb >= 0.62) && (near || late || behindButLive)) score += 14 + pointsWithCard * 3;
+      if (!isPoint && !isTrump && card.value <= 8 && behindButLive && projection.enemySwingProb < 0.34) score += 5;
+    }
+
+    // V26：秘書中盤救局，不等殘局才公開；差2–3頭、多頭墩或能反吃時更願意出手。
+    if (isSecretCard) {
+      const rescueWindow = (game.trickNo || 0) >= 4 || near || behindButLive || pointsWithCard >= 2;
+      if (rescueWindow && (candidateWins || currentAllyWinning || projection.holdProb >= 0.50)) score += 34 + pointsWithCard * 7 + (late ? 7 : 0);
+      else if (!rescueWindow && (game.trickNo || 0) <= 2) score -= 5;
+    }
+
+    // V26：對手吃墩時，用最低成本搶回關鍵墩；但不能搶回時別把頭送出去。
+    if (currentEnemyWinning) {
+      if (candidateWins) score += 14 + pointsWithCard * 6 + (near ? 7 : 0);
+      else if (isPoint && !ctx.actingLast) score -= 14 + projection.enemyHoldProb * 8;
+    }
+
+    // V26：盟友吃穩時安全餵頭，尤其秘書或拿破崙已確定能保住本墩。
+    if (currentAllyWinning && isPoint && !candidateWins) {
+      const safeFeed = ctx.actingLast || projection.enemySwingProb < (near || late ? 0.58 : 0.42);
+      score += safeFeed ? (12 + pointsWithCard * 3 + (near ? 5 : 0)) : -5;
+    }
+  } else {
+    // V26：防家仍要擋約，但拿破崙已明顯落後時，不要每個非關鍵小墩都封死，讓局面有攻防起伏。
+    const napFarBehind = napNeeds >= Math.max(6, remainingHeads * 0.62);
+    const nonCritical = napFarBehind && !late && pointsWithCard <= 1;
+    if (nonCritical && candidateWins && control >= 10 && !ctx.actingLast) score -= 7;
+    if (nonCritical && currentAllyWinning && isPoint && !candidateWins && projection.enemySwingProb < 0.36) score -= 5;
+    if (!nonCritical && napNeeds <= 3 && candidateWins && currentEnemyWinning) score += 6 + pointsWithCard * 4;
+  }
+
+  return score * weight;
+}
+
+function aiV26BidAndTempoNotes(game, seat, card, ctx) {
+  const difficulty = Number(game.settings?.difficulty || 10);
+  if (difficulty < 16 || !card || !ctx) return [];
+  const notes = [];
+  const projection = aiV8ProjectedTrickOutcome(game, seat, card, ctx);
+  const trickLen = game.trick?.length || 0;
+  const pointsWithCard = (ctx.pointsOnTable || 0) + (isHeadCard(card) ? 1 : 0);
+  const napNeeds = Math.max(0, ctx.napNeeds || 0);
+  const remainingHeads = Math.max(1, ctx.remainingHeads || 1);
+  const candidateWins = trickLen === 0 ? aiLikelyLeadWin(game, seat, card) >= 0.58 : wouldWin(game, card);
+  const near = napNeeds >= 1 && napNeeds <= Math.max(4, Math.ceil(remainingHeads * 0.42));
+  if (ctx.myTeam === "nap" && near && candidateWins) notes.push("V26拿破崙控局：差1–3頭時提前兌現可守住的頭牌/控制牌");
+  if (seat === game.napoleon && trickLen === 0 && game.trump && game.trump !== "NT" && card.suit === game.trump && projection.enemyCutPressure < 0.72) notes.push("V26王牌節奏：中盤落後時用王牌逼防家交控制牌");
+  if (ctx.myTeam === "nap" && !game.secretaryRevealed && card.id === game.secretaryCardId && ((game.trickNo || 0) >= 4 || near || pointsWithCard >= 2)) notes.push("V26秘書救局：中盤成敗線附近提早曝光支援");
+  if (ctx.myTeam === "def" && napNeeds >= Math.max(6, remainingHeads * 0.62)) notes.push("V26攻防平衡：拿破崙明顯落後時防家降低非關鍵封鎖");
+  return notes.slice(0, 2);
+}
+
 function aiExplainPlayChoice(game, seat, card) {
   const difficulty = Number(game.settings?.difficulty || 10);
   if (difficulty < 16 || !card) return null;
@@ -4373,7 +4568,8 @@ function aiExplainPlayChoice(game, seat, card) {
   parts.push(...aiV23MicroBalanceNotes(game, seat, card, ctx));
   parts.push(...aiV24NapoleonCommanderNotes(game, seat, card, ctx));
   parts.push(...aiV25NapoleonPracticalBoostNotes(game, seat, card, ctx));
-  if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號、成約差、本局學習、AI風格、長局計畫、對手模型、送頭防護、防守平衡與攻防微調評分後選出");
+  parts.push(...aiV26BidAndTempoNotes(game, seat, card, ctx));
+  if (!parts.length) parts.push("以最低成本、後手投影、隊友訊號、成約差、本局學習、AI風格、長局計畫、對手模型、送頭防護、防守平衡、攻防微調與V26控局校正評分後選出");
   return `選 ${cardLong(card)}：${parts.slice(0, 3).join("；")}。`;
 }
 
