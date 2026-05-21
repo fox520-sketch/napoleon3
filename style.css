@@ -2004,3 +2004,98 @@ body[data-theme="twilight"] .quick-mode span { color: #d3ddfb; }
   .quick-mode-grid { grid-template-columns: 1fr; }
   .quick-mode { min-height: auto; }
 }
+
+
+/* V35 release checklist, tutorial, and replay analysis */
+.release-test-card {
+  align-items: center;
+}
+.checklist-dialog,
+.tutorial-dialog { width: min(960px, calc(100% - 24px)); }
+.checklist-body,
+.tutorial-body { max-height: min(84vh, 820px); overflow: auto; }
+.release-checklist { display: grid; gap: 0.8rem; margin-top: 0.9rem; }
+.checklist-group {
+  padding: 0.85rem;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.64);
+}
+.checklist-group h3 { margin-bottom: 0.55rem; }
+.checklist-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.55rem;
+  align-items: start;
+  padding: 0.42rem 0;
+  color: var(--ink);
+  font-weight: 720;
+  line-height: 1.5;
+}
+.checklist-item input { width: auto; margin-top: 0.2rem; }
+.tutorial-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin-top: 0.85rem;
+}
+.tutorial-grid article {
+  padding: 0.95rem;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.66);
+}
+.tutorial-grid h3 { margin-bottom: 0.38rem; }
+.tutorial-grid p { margin-bottom: 0; line-height: 1.65; color: var(--muted); }
+.replay-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: -0.18rem 0 0.58rem;
+}
+.replay-tags span,
+.replay-play small {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}
+.replay-tags span { padding: 0.2rem 0.48rem; border: 1px solid rgba(8, 126, 164, 0.14); }
+.replay-tags .tag-key { color: #075b76; background: rgba(46, 196, 182, 0.16); }
+.replay-tags .tag-swing { color: #7c5209; background: rgba(214, 158, 46, 0.18); border-color: rgba(214, 158, 46, 0.25); }
+.replay-tags .tag-secretary { color: #7c2960; background: rgba(211, 106, 148, 0.16); border-color: rgba(211, 106, 148, 0.22); }
+.replay-tags .tag-control { color: #17324a; background: rgba(144, 161, 255, 0.16); border-color: rgba(144, 161, 255, 0.22); }
+.replay-tags .tag-defense { color: #2d7a4b; background: rgba(63, 154, 96, 0.14); border-color: rgba(63, 154, 96, 0.22); }
+.replay-tags .tag-warning { color: #8d1f2e; background: rgba(217, 76, 92, 0.14); border-color: rgba(217, 76, 92, 0.22); }
+.replay-play { flex-wrap: wrap; }
+.replay-play small {
+  padding: 0.08rem 0.3rem;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--muted);
+}
+.replay-play.secret-card small { color: #7c2960; }
+.replay-play.control-card small { color: var(--primary); }
+.replay-play.head-card small { color: #7c5209; }
+body[data-theme="twilight"] .checklist-group,
+body[data-theme="twilight"] .tutorial-grid article {
+  color: #eef3ff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(196, 205, 236, 0.18);
+}
+body[data-theme="twilight"] .tutorial-grid p,
+body[data-theme="twilight"] .checklist-item { color: #dce5ff; }
+body[data-theme="twilight"] .replay-tags .tag-key,
+body[data-theme="twilight"] .replay-tags .tag-control,
+body[data-theme="twilight"] .replay-tags .tag-defense,
+body[data-theme="twilight"] .replay-tags .tag-secretary,
+body[data-theme="twilight"] .replay-tags .tag-swing,
+body[data-theme="twilight"] .replay-tags .tag-warning {
+  color: #f5f7ff;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(196, 205, 236, 0.22);
+}
+@media (max-width: 720px) {
+  .tutorial-grid { grid-template-columns: 1fr; }
+}

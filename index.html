@@ -66,6 +66,8 @@
             <p class="hint compact">不知道怎麼選？用下面三個入口即可。新手建議先開玩家提示；多人則先連線 Firebase。</p>
           </div>
           <button id="btnOpenReleaseNotes" class="ghost" type="button">本版更新</button>
+          <button id="btnOpenReleaseChecklist" class="ghost" type="button">正式版測試</button>
+          <button id="btnOpenTutorial" class="ghost" type="button">玩法教學</button>
         </div>
         <div class="quick-mode-grid">
           <button id="btnQuickBeginner" class="quick-mode" type="button">
@@ -160,6 +162,18 @@
           <p id="diagnosticStatus" class="diagnostic-status">尚未執行系統測試。</p>
         </div>
         <button id="btnRunDiagnostics" class="ghost">執行系統測試</button>
+      </div>
+
+      <div class="tool-card release-test-card">
+        <div>
+          <h3>正式版測試清單</h3>
+          <p class="hint">更新後可依序檢查單人、多人、PWA、AI 健康檢查與手機版面，避免公開後才發現壞掉。</p>
+          <p id="releaseChecklistStatus" class="diagnostic-status">建議部署後跑一次。</p>
+        </div>
+        <div class="tool-actions">
+          <button id="btnOpenReleaseChecklist2" class="ghost" type="button">打開測試清單</button>
+          <button id="btnOpenTutorial2" class="ghost" type="button">完整玩法教學</button>
+        </div>
       </div>
 
       <div class="tool-card stats-card">
@@ -426,16 +440,52 @@
       <div class="dialog-body release-body">
         <button id="closeReleaseNotes" class="close" type="button">×</button>
         <p class="eyebrow">版本更新</p>
-        <h2>AI V34：公開首頁・快速開始・維護包</h2>
+        <h2>AI V35：測試清單・玩法教學・回放分析</h2>
         <ul class="release-list">
-          <li><b>快速開始：</b>新手、標準單人、多人邀請三個入口。</li>
-          <li><b>維護包：</b>一鍵複製版本、瀏覽器、設定、錯誤與統計摘要，方便回報問題。</li>
-          <li><b>快取修復：</b>手機吃到舊版時，可清除舊 PWA 快取並重新載入。</li>
-          <li><b>公開版首頁：</b>首頁資訊整理得更像正式入口。</li>
+          <li><b>正式版測試：</b>新增可勾選的公開前測試清單，可複製測試結果。</li>
+          <li><b>完整玩法教學：</b>新增叫牌、換底牌、秘書、牌力大小、勝負判定與常見規則差異說明。</li>
+          <li><b>回放分析標籤：</b>牌局回放會標示關鍵多頭墩、秘書曝光、控制牌使用、可疑送頭與擋約墩。</li>
+          <li><b>維護改善：</b>版本、快取與公開版文件更新為 V35。</li>
         </ul>
         <div class="button-row dialog-actions">
+          <button id="btnOpenTutorialFromRelease" class="ghost" type="button">玩法教學</button>
           <button id="btnCopySupportBundleInDialog" class="ghost" type="button">複製維護包</button>
           <button id="btnClearPwaCacheInDialog" class="ghost" type="button">清除舊快取</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="releaseChecklistDialog" class="checklist-dialog">
+      <div class="dialog-body checklist-body">
+        <button id="closeReleaseChecklist" class="close" type="button">×</button>
+        <p class="eyebrow">正式版測試</p>
+        <h2>公開前測試清單</h2>
+        <p class="hint">每次覆蓋 GitHub Pages 後，建議照順序跑一次。勾選結果只存在本機，可複製後貼到維護紀錄。</p>
+        <div id="releaseChecklist" class="release-checklist"></div>
+        <div class="button-row dialog-actions">
+          <button id="btnCopyChecklistResult" class="ghost" type="button">複製測試結果</button>
+          <button id="btnResetChecklist" class="ghost" type="button">重設勾選</button>
+          <button id="btnChecklistDiagnostics" class="primary" type="button">執行系統測試</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="tutorialDialog" class="tutorial-dialog">
+      <div class="dialog-body tutorial-body">
+        <button id="closeTutorial" class="close" type="button">×</button>
+        <p class="eyebrow">玩法教學</p>
+        <h2>拿破崙與秘書完整教學</h2>
+        <div class="tutorial-grid">
+          <article><h3>1. 基本牌局</h3><p>5 人遊戲，使用 54 張牌，每人 10 張，4 張底牌。A/K/Q/J 是頭牌，共 16 頭；本局目標就是搶到足夠頭數。</p></article>
+          <article><h3>2. 叫牌</h3><p>叫品為「數字＋花色」，例如 11 黑桃。數字代表拿破崙軍需要的頭數，同數字花色大小依 ♣ &lt; ♦ &lt; ♥ &lt; ♠；若開啟無王，無王最大。</p></article>
+          <article><h3>3. 拿破崙與秘書</h3><p>最高叫品者成為拿破崙，該花色為王牌。拿破崙拿底牌後蓋牌，再指定一張秘書牌；持有者暗中成為隊友，打出秘書牌時公開。</p></article>
+          <article><h3>4. 出牌大小</h3><p>秘書牌最大，其後通常為大鬼、小鬼、王牌、首引花色。若啟用末三輪鬼牌變小，鬼牌後期威力下降；前三輪王牌 2/3 可召鬼。</p></article>
+          <article><h3>5. 勝負</h3><p>拿破崙軍吃到成約頭數即勝；否則聯合國勝。秘書未公開前，牌桌只顯示拿破崙本人頭數，避免洩漏身分。</p></article>
+          <article><h3>6. 新手建議</h3><p>先開「玩家提示」，叫牌不要太貪；出牌時優先確認是否必須跟牌，隊友穩吃時才安全餵頭，對手吃墩時少送 A/K/Q/J。</p></article>
+        </div>
+        <div class="button-row dialog-actions">
+          <button id="btnTutorialEnableHints" class="primary" type="button">開啟玩家提示</button>
+          <button id="btnTutorialOpenRules" class="ghost" type="button">玩法摘要</button>
         </div>
       </div>
     </dialog>

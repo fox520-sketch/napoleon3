@@ -40,8 +40,8 @@ async function loadFirebaseSdk() {
   serverTimestamp = dbMod.serverTimestamp;
 }
 
-const APP_VERSION = "AI V34｜公開首頁・快速開始・維護包";
-const APP_BUILD = "2026-05-21-v34";
+const APP_VERSION = "AI V35｜測試清單・玩法教學・回放分析";
+const APP_BUILD = "2026-05-21-v35";
 const ROOM_TTL_MS = 1000 * 60 * 60 * 24;
 const ROOM_STALE_MS = 1000 * 60 * 60 * 12;
 const $ = (id) => document.getElementById(id);
@@ -85,7 +85,8 @@ const STORAGE = {
   errorLog: "napoleon.error.log.v1",
   lastRoom: "napoleon.last.room.v1",
   lastRoomAt: "napoleon.last.room.at.v1",
-  onboardingSeen: "napoleon.onboarding.seen.v1"
+  onboardingSeen: "napoleon.onboarding.seen.v1",
+  releaseChecklist: "napoleon.release.checklist.v35"
 };
 const THEME_OPTIONS = ["auto", "ocean", "eye-care", "e-ink", "forest", "grassland", "sakura", "twilight"];
 const THEME_PALETTE = THEME_OPTIONS.filter((theme) => theme !== "auto");
@@ -179,6 +180,18 @@ function init() {
   $("btnOnboarding")?.addEventListener("click", () => showOnboardingDialog(true));
   $("btnOpenReleaseNotes")?.addEventListener("click", openReleaseNotesDialog);
   $("closeReleaseNotes")?.addEventListener("click", () => $("releaseNotesDialog")?.close());
+  $("btnOpenTutorialFromRelease")?.addEventListener("click", () => { $("releaseNotesDialog")?.close(); openTutorialDialog(); });
+  $("btnOpenReleaseChecklist")?.addEventListener("click", openReleaseChecklistDialog);
+  $("btnOpenReleaseChecklist2")?.addEventListener("click", openReleaseChecklistDialog);
+  $("closeReleaseChecklist")?.addEventListener("click", () => $("releaseChecklistDialog")?.close());
+  $("btnCopyChecklistResult")?.addEventListener("click", copyReleaseChecklistResult);
+  $("btnResetChecklist")?.addEventListener("click", resetReleaseChecklist);
+  $("btnChecklistDiagnostics")?.addEventListener("click", () => { runDiagnostics(); renderReleaseChecklist(); });
+  $("btnOpenTutorial")?.addEventListener("click", openTutorialDialog);
+  $("btnOpenTutorial2")?.addEventListener("click", openTutorialDialog);
+  $("closeTutorial")?.addEventListener("click", () => $("tutorialDialog")?.close());
+  $("btnTutorialEnableHints")?.addEventListener("click", () => { setPlayerHintsVisible(true); toast("已開啟玩家提示"); });
+  $("btnTutorialOpenRules")?.addEventListener("click", () => { $("tutorialDialog")?.close(); $("rulesDialog")?.showModal(); });
   $("btnQuickBeginner")?.addEventListener("click", quickStartBeginner);
   $("btnQuickStandard")?.addEventListener("click", quickStartStandard);
   $("btnQuickMultiplayer")?.addEventListener("click", scrollToMultiplayerStart);
@@ -212,6 +225,7 @@ function init() {
   renderConnectState();
   renderVersionInfo();
   renderLocalStatsSummary();
+  renderReleaseChecklistStatus();
   installErrorCapture();
   installKeyboardShortcuts();
   maybeShowFirstRunGuide();
@@ -1060,6 +1074,98 @@ function restoreLocalDataFromDialog() {
   if (name && $("playerName")) $("playerName").value = name;
   $("importDataDialog")?.close();
   toast("已還原本機資料");
+}
+
+const RELEASE_CHECKLIST_ITEMS = [
+  { id: "offline", group: "單人", text: "單人離線可以從首頁開始，並完整玩完一局。" },
+  { id: "bidding", group: "規則", text: "叫牌、換底牌、選秘書流程正常，王牌與成約顯示正確。" },
+  { id: "hints", group: "提示", text: "玩家提示可開關，並在叫牌、換底牌、選秘書、出牌時顯示建議。" },
+  { id: "replay", group: "回放", text: "本局結束後可打開牌局回放，且有分析標籤。" },
+  { id: "ai-health", group: "AI", text: "AI 健康檢查能跑完，健康分數與攻防建議正常顯示。" },
+  { id: "firebase", group: "多人", text: "Firebase 可連線，建立房間、加入房間與 QR Code 邀請正常。" },
+  { id: "host-tools", group: "多人", text: "房主工具可顯示房間狀態，必要時能接管離線玩家或關閉房間。" },
+  { id: "mobile", group: "手機", text: "手機直向/橫向可看見牌桌、手牌與主要操作。" },
+  { id: "pwa", group: "PWA", text: "安裝、快取、清除舊快取與更新提示正常。" },
+  { id: "support", group: "維護", text: "維護包、錯誤回報、本機資料匯出/還原可以複製。" }
+];
+
+function loadReleaseChecklist() {
+  try { return JSON.parse(localStorage.getItem(STORAGE.releaseChecklist) || "{}"); }
+  catch { return {}; }
+}
+
+function saveReleaseChecklist(data) {
+  localStorage.setItem(STORAGE.releaseChecklist, JSON.stringify(data || {}));
+  renderReleaseChecklistStatus();
+}
+
+function renderReleaseChecklistStatus() {
+  const el = $("releaseChecklistStatus");
+  if (!el) return;
+  const data = loadReleaseChecklist();
+  const done = RELEASE_CHECKLIST_ITEMS.filter((item) => data[item.id]).length;
+  el.textContent = `已完成 ${done}/${RELEASE_CHECKLIST_ITEMS.length} 項；部署後建議全部檢查。`;
+}
+
+function renderReleaseChecklist() {
+  const list = $("releaseChecklist");
+  if (!list) return;
+  const data = loadReleaseChecklist();
+  const groups = new Map();
+  for (const item of RELEASE_CHECKLIST_ITEMS) {
+    if (!groups.has(item.group)) groups.set(item.group, []);
+    groups.get(item.group).push(item);
+  }
+  list.innerHTML = Array.from(groups.entries()).map(([group, items]) => `
+    <section class="checklist-group">
+      <h3>${escapeHtml(group)}</h3>
+      ${items.map((item) => `
+        <label class="checklist-item">
+          <input type="checkbox" data-check-id="${escapeHtml(item.id)}" ${data[item.id] ? "checked" : ""} />
+          <span>${escapeHtml(item.text)}</span>
+        </label>
+      `).join("")}
+    </section>
+  `).join("");
+  list.querySelectorAll("input[data-check-id]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const next = loadReleaseChecklist();
+      next[input.dataset.checkId] = input.checked;
+      saveReleaseChecklist(next);
+    });
+  });
+  renderReleaseChecklistStatus();
+}
+
+function openReleaseChecklistDialog() {
+  renderReleaseChecklist();
+  $("releaseChecklistDialog")?.showModal();
+}
+
+function resetReleaseChecklist() {
+  saveReleaseChecklist({});
+  renderReleaseChecklist();
+  toast("測試清單已重設");
+}
+
+async function copyReleaseChecklistResult() {
+  const data = loadReleaseChecklist();
+  const done = RELEASE_CHECKLIST_ITEMS.filter((item) => data[item.id]).length;
+  const lines = [
+    `正式版測試清單｜${APP_VERSION}（${APP_BUILD}）`,
+    `完成：${done}/${RELEASE_CHECKLIST_ITEMS.length}`,
+    `網址：${location.href}`,
+    ""
+  ];
+  for (const item of RELEASE_CHECKLIST_ITEMS) {
+    lines.push(`${data[item.id] ? "[x]" : "[ ]"} ${item.group}｜${item.text}`);
+  }
+  await copyText(lines.join("\n"));
+  toast("已複製測試結果");
+}
+
+function openTutorialDialog() {
+  $("tutorialDialog")?.showModal();
 }
 
 function openReleaseNotesDialog() {
@@ -6550,18 +6656,63 @@ function openReplayDialog(game = appState.room?.game) {
 
 function renderReplayTrick(game, h) {
   const winnerName = game.players?.[h.winner]?.name || `座位 ${Number(h.winner) + 1}`;
+  const tags = replayAnalysisTags(game, h);
   const plays = (h.plays || []).map((p) => {
     const name = game.players?.[p.seat]?.name || `座位 ${Number(p.seat) + 1}`;
     const isWinner = Number(p.seat) === Number(h.winner);
-    return `<div class="replay-play ${isWinner ? "winner" : ""}"><span>${escapeHtml(name)}</span><b class="${cardClass(p.card)}">${escapeHtml(cardLabel(p.card))}</b></div>`;
+    const tag = replayPlayTag(game, h, p);
+    return `<div class="replay-play ${isWinner ? "winner" : ""} ${tag.className}"><span>${escapeHtml(name)}</span><b class="${cardClass(p.card)}">${escapeHtml(cardLabel(p.card))}</b>${tag.text ? `<small>${escapeHtml(tag.text)}</small>` : ""}</div>`;
   }).join("");
   const roleNote = replayTrickNote(game, h);
-  return `<article class="replay-trick"><header><b>第 ${Number(h.trickNo) + 1} 墩</b><span>${escapeHtml(winnerName)} 吃下，${h.heads || 0} 頭</span></header><div class="replay-plays">${plays}</div>${roleNote ? `<p>${escapeHtml(roleNote)}</p>` : ""}</article>`;
+  const tagHtml = tags.length ? `<div class="replay-tags">${tags.map((tag) => `<span class="${escapeHtml(tag.className)}">${escapeHtml(tag.text)}</span>`).join("")}</div>` : "";
+  return `<article class="replay-trick"><header><b>第 ${Number(h.trickNo) + 1} 墩</b><span>${escapeHtml(winnerName)} 吃下，${h.heads || 0} 頭</span></header>${tagHtml}<div class="replay-plays">${plays}</div>${roleNote ? `<p>${escapeHtml(roleNote)}</p>` : ""}</article>`;
+}
+
+function replayAnalysisTags(game, h) {
+  const tags = [];
+  const heads = h.heads || 0;
+  const winnerTeam = teamOf(game, h.winner);
+  const plays = h.plays || [];
+  if (heads >= 2) tags.push({ text: `關鍵多頭墩 ${heads} 頭`, className: "tag-key" });
+  if (heads >= 3) tags.push({ text: "勝負轉折候選", className: "tag-swing" });
+  if (plays.some((p) => p.card?.id === game.secretaryCardId)) tags.push({ text: "秘書曝光/秘書牌", className: "tag-secretary" });
+  if (plays.some((p) => isReplayControlCard(game, p.card))) tags.push({ text: "控制牌使用", className: "tag-control" });
+  if (winnerTeam === "def" && heads >= 1 && game.contract) tags.push({ text: "聯合國擋約墩", className: "tag-defense" });
+  const suspicious = replaySuspiciousFeeds(game, h);
+  if (suspicious.length) tags.push({ text: `可疑送頭 ${suspicious.length}`, className: "tag-warning" });
+  return tags;
+}
+
+function replayPlayTag(game, h, p) {
+  if (!p?.card) return { text: "", className: "" };
+  if (p.card.id === game.secretaryCardId) return { text: "秘書牌", className: "secret-card" };
+  if (p.card.joker) return { text: "鬼牌", className: "control-card" };
+  if (game.trump && game.trump !== "NT" && p.card.suit === game.trump && p.card.value >= 11) return { text: "王牌", className: "control-card" };
+  if (isHeadCard(p.card)) return { text: "頭", className: "head-card" };
+  return { text: "", className: "" };
+}
+
+function isReplayControlCard(game, card) {
+  if (!card) return false;
+  if (card.joker || card.id === game.secretaryCardId) return true;
+  return Boolean(game.trump && game.trump !== "NT" && card.suit === game.trump && card.value >= 11);
+}
+
+function replaySuspiciousFeeds(game, h) {
+  const winnerTeam = teamOf(game, h.winner);
+  return (h.plays || []).filter((p) => {
+    if (!isHeadCard(p.card) || Number(p.seat) === Number(h.winner)) return false;
+    const team = teamOf(game, p.seat);
+    if (team === winnerTeam) return false;
+    return true;
+  });
 }
 
 function replayTrickNote(game, h) {
   const winnerTeam = teamOf(game, h.winner);
   const lead = h.leadSuit ? `首引 ${suitName(h.leadSuit)}` : "首引未指定花色";
+  const tags = replayAnalysisTags(game, h).map((tag) => tag.text).join("、");
+  if (tags) return `${lead}；分析：${tags}。`;
   if ((h.heads || 0) >= 2) return `${lead}；本墩有 ${h.heads} 頭，是關鍵多頭墩。`;
   if (winnerTeam === "nap") return `${lead}；拿破崙軍收下本墩。`;
   return `${lead}；聯合國守住本墩。`;

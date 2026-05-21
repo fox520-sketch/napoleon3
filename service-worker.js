@@ -1,4 +1,4 @@
-const CACHE_NAME = "napoleon-secretary-v34-public-start-support";
+const CACHE_NAME = "napoleon-secretary-v35-release-test-tutorial-replay";
 const ASSETS = [
   "./",
   "./index.html",
