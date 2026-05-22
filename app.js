@@ -40,8 +40,8 @@ async function loadFirebaseSdk() {
   serverTimestamp = dbMod.serverTimestamp;
 }
 
-const APP_VERSION = "AI V39｜結算頭數修正";
-const APP_BUILD = "2026-05-22-v39-result-heads";
+const APP_VERSION = "AI V40｜拿破崙軍頭數顯示修正";
+const APP_BUILD = "2026-05-22-v40-nap-team-heads";
 const ROOM_TTL_MS = 1000 * 60 * 60 * 24;
 const ROOM_STALE_MS = 1000 * 60 * 60 * 12;
 const DEFAULT_PUBLIC_URL = "https://fox520-sketch.github.io/napoleon3/";
@@ -6337,13 +6337,13 @@ function calculateHeadTotals(game) {
   if (game.secretaryOwner !== null && game.secretaryOwner !== undefined) teamSeats.add(game.secretaryOwner);
   let teamHeads = 0;
   let defenderHeads = 0;
-  (Array.isArray(game.captured) ? game.captured : []).forEach((cards, seat) => {
-    const heads = countPoints(cards || []);
+  for (let seat = 0; seat < 5; seat += 1) {
+    const heads = seatHeadCount(game, seat);
     if (teamSeats.has(Number(seat))) teamHeads += heads;
     else defenderHeads += heads;
-  });
+  }
 
-  // V39：結算畫面要能穩定顯示聯合國頭數。
+  // V40：結算與座位資訊要用同一套實際吃牌統計。
   // 某些舊局或同步狀態可能只保留拿破崙軍 captured 統計，導致防家顯示 0 頭。
   // A/K/Q/J 共 16 頭；底牌若沒有算給防家，需先扣掉底牌頭，再由總頭數反推出防家至少應有的頭數。
   if (buriedMode === "defenders") defenderHeads += buriedHeads;
@@ -6511,12 +6511,10 @@ function renderTableTeamHeads(game) {
     return;
   }
 
-  const napoleonHeads = countPoints(game.captured?.[game.napoleon] || []);
   const secretaryKnown = Boolean(game.secretaryRevealed && game.secretaryOwner !== null && game.secretaryOwner !== undefined);
-  const shownSeats = new Set([game.napoleon]);
-  if (secretaryKnown) shownSeats.add(game.secretaryOwner);
-  const shownHeads = Array.from(shownSeats).reduce((sum, seat) => sum + countPoints(game.captured?.[seat] || []), 0);
-  const target = game.contract ? ` / ${game.contract}` : "";
+  const shownHeads = secretaryKnown ? napoleonTeamHeadCount(game, true) : seatHeadCount(game, game.napoleon);
+  const totals = calculateHeadTotals(game);
+  const target = totals.contract ? ` / ${totals.contract}` : "";
   const label = secretaryKnown
     ? (game.secretaryOwner === game.napoleon ? "拿破崙獨裁" : "拿破崙＋秘書")
     : "拿破崙已吃";
@@ -6593,9 +6591,16 @@ function renderSeats(game) {
     const bidLeader = biddingHighest && biddingHighest.seat === seat ? "bid-leader" : "";
     el.className = `seat seat-${seat} ${current} ${isMine} ${biddingTurn} ${bidLeader}`;
     const tags = [];
-    const capturedHeads = countPoints(game.captured?.[seat] || []);
+    const capturedHeads = seatHeadCount(game, seat);
     tags.push(`<span class="tag">${p.hand?.length || 0} 張</span>`);
     tags.push(`<span class="tag">吃 ${capturedHeads} 頭</span>`);
+    const secretaryKnown = Boolean(game.secretaryRevealed && game.secretaryOwner !== null && game.secretaryOwner !== undefined);
+    const teamSeats = napoleonTeamSeats(game, true);
+    if (secretaryKnown && teamSeats.has(Number(seat))) {
+      tags.push(`<span class="tag gold">軍 ${napoleonTeamHeadCount(game, true)} 頭</span>`);
+    } else if (seat === game.napoleon && !secretaryKnown && game.napoleon !== null && game.napoleon !== undefined) {
+      tags.push(`<span class="tag gold">拿方 ${capturedHeads} 頭</span>`);
+    }
     if (p.type === "bot") {
       const aiLabel = aiPersonality(seat, game.settings).label || "電腦";
       tags.push(`<span class="tag gold">AI ${escapeHtml(aiLabel)}</span>`);
@@ -7151,6 +7156,35 @@ function isHeadCard(card) {
 
 function countPoints(cards) {
   return (cards || []).filter(isHeadCard).length;
+}
+
+function seatCapturedCards(game, seat) {
+  if (!game) return [];
+  const fromCaptured = game.captured?.[seat] || [];
+  const history = Array.isArray(game.trickHistory) ? game.trickHistory : [];
+  const fromHistory = history
+    .filter((trick) => Number(trick.winner) === Number(seat))
+    .flatMap((trick) => (trick.plays || []).map((play) => play.card).filter(Boolean));
+  // V40：以牌局回放紀錄作為優先來源。
+  // 某些多人同步或舊版狀態可能讓 captured[seat] 沒有即時帶到座位資訊，
+  // 但 trickHistory 仍保留每墩勝者與出牌，能避免拿破崙座位顯示「吃 0 頭」。
+  return fromHistory.length ? fromHistory : fromCaptured;
+}
+
+function seatHeadCount(game, seat) {
+  return countPoints(seatCapturedCards(game, seat));
+}
+
+function napoleonTeamSeats(game, revealOnly = false) {
+  const seats = new Set();
+  if (game?.napoleon !== null && game?.napoleon !== undefined) seats.add(Number(game.napoleon));
+  const canShowSecretary = !revealOnly || Boolean(game?.secretaryRevealed);
+  if (canShowSecretary && game?.secretaryOwner !== null && game?.secretaryOwner !== undefined) seats.add(Number(game.secretaryOwner));
+  return seats;
+}
+
+function napoleonTeamHeadCount(game, revealOnly = false) {
+  return Array.from(napoleonTeamSeats(game, revealOnly)).reduce((sum, seat) => sum + seatHeadCount(game, seat), 0);
 }
 
 function findCardById(id) {
