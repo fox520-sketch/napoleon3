@@ -40,8 +40,8 @@ async function loadFirebaseSdk() {
   serverTimestamp = dbMod.serverTimestamp;
 }
 
-const APP_VERSION = "AI V38｜手機手感・音效細節・分享素材";
-const APP_BUILD = "2026-05-22-v38";
+const APP_VERSION = "AI V39｜結算頭數修正";
+const APP_BUILD = "2026-05-22-v39-result-heads";
 const ROOM_TTL_MS = 1000 * 60 * 60 * 24;
 const ROOM_STALE_MS = 1000 * 60 * 60 * 12;
 const DEFAULT_PUBLIC_URL = "https://fox520-sketch.github.io/napoleon3/";
@@ -6328,7 +6328,8 @@ function teamOf(game, seat) {
 function calculateHeadTotals(game) {
   const bidAmount = getBidAmount(game);
   const buriedHeads = countPoints(game?.buried || []);
-  const rawContract = game?.settings?.buriedMode === "addContract"
+  const buriedMode = game?.settings?.buriedMode || "addContract";
+  const rawContract = buriedMode === "addContract"
     ? bidAmount + buriedHeads
     : (Number(game?.contract || 0) || bidAmount);
   const contract = Math.min(16, rawContract);
@@ -6336,13 +6337,21 @@ function calculateHeadTotals(game) {
   if (game.secretaryOwner !== null && game.secretaryOwner !== undefined) teamSeats.add(game.secretaryOwner);
   let teamHeads = 0;
   let defenderHeads = 0;
-  (game.captured || []).forEach((cards, seat) => {
+  (Array.isArray(game.captured) ? game.captured : []).forEach((cards, seat) => {
     const heads = countPoints(cards || []);
     if (teamSeats.has(Number(seat))) teamHeads += heads;
     else defenderHeads += heads;
   });
-  if (game.settings?.buriedMode === "defenders") defenderHeads += buriedHeads;
-  else if (game.settings?.buriedMode !== "addContract") teamHeads += buriedHeads;
+
+  // V39：結算畫面要能穩定顯示聯合國頭數。
+  // 某些舊局或同步狀態可能只保留拿破崙軍 captured 統計，導致防家顯示 0 頭。
+  // A/K/Q/J 共 16 頭；底牌若沒有算給防家，需先扣掉底牌頭，再由總頭數反推出防家至少應有的頭數。
+  if (buriedMode === "defenders") defenderHeads += buriedHeads;
+  else if (buriedMode !== "addContract" && buriedMode !== "ignore") teamHeads += buriedHeads;
+  const headsOutsidePlay = buriedMode === "defenders" ? 0 : buriedHeads;
+  const expectedDefenderHeads = Math.max(0, 16 - headsOutsidePlay - teamHeads);
+  defenderHeads = Math.max(defenderHeads, expectedDefenderHeads);
+
   return { teamHeads, defenderHeads, buriedHeads, contract };
 }
 
