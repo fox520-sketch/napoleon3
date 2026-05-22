@@ -1,4 +1,4 @@
-const CACHE_NAME = "napoleon-secretary-v36-spectator-achievements-replay-share";
+const CACHE_NAME = "napoleon-secretary-v37-public-management-share";
 const ASSETS = [
   "./",
   "./index.html",

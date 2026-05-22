@@ -68,6 +68,7 @@
           <button id="btnOpenReleaseNotes" class="ghost" type="button">本版更新</button>
           <button id="btnOpenReleaseChecklist" class="ghost" type="button">正式版測試</button>
           <button id="btnOpenTutorial" class="ghost" type="button">玩法教學</button>
+          <button id="btnOpenPublicStatusTop" class="ghost" type="button">公開狀態</button>
         </div>
         <div class="quick-mode-grid">
           <button id="btnQuickBeginner" class="quick-mode" type="button">
@@ -82,6 +83,18 @@
             <b>邀請朋友</b>
             <span>跳到多人區，連線 Firebase 後建立房間與 QR Code。</span>
           </button>
+        </div>
+      </div>
+
+      <div class="public-share-card" aria-label="公開版管理與分享">
+        <div>
+          <h3>公開版管理</h3>
+          <p class="hint">要分享給朋友或確認部署狀態時，先用這裡複製公開網址、介紹文，或查看目前 PWA / Firebase / 快取狀態。</p>
+        </div>
+        <div class="tool-actions">
+          <button id="btnCopyPublicLink" class="ghost" type="button">複製公開網址</button>
+          <button id="btnCopyPublicIntro" class="ghost" type="button">分享介紹文</button>
+          <button id="btnOpenPublicStatus" class="ghost" type="button">檢查公開狀態</button>
         </div>
       </div>
 
@@ -443,15 +456,13 @@
       <div class="dialog-body release-body">
         <button id="closeReleaseNotes" class="close" type="button">×</button>
         <p class="eyebrow">版本更新</p>
-        <h2>AI V36：觀戰・成就・回放分享</h2>
+        <h2>AI V37：公開入口・管理面板・維護分享</h2>
         <ul class="release-list">
-          <li><b>正式版測試：</b>新增可勾選的公開前測試清單，可複製測試結果。</li>
-          <li><b>完整玩法教學：</b>新增叫牌、換底牌、秘書、牌力大小、勝負判定與常見規則差異說明。</li>
-          <li><b>回放分析標籤：</b>牌局回放會標示關鍵多頭墩、秘書曝光、控制牌使用、可疑送頭與擋約墩。</li>
-          <li><b>維護改善：</b>版本、快取與公開版文件更新為 V36。</li>
-          <li><b>觀戰模式：</b>房間已滿或已開局時可用觀戰加入，看公開牌桌、紀錄與回放。</li>
-          <li><b>本機成就：</b>依局數、勝率、拿破崙/聯合國勝利與接近成敗線解鎖成就。</li>
-          <li><b>回放分享：</b>牌局回放可複製/分享關鍵墩摘要。</li>
+          <li><b>公開版管理：</b>首頁新增公開網址、介紹文分享與公開狀態檢查。</li>
+          <li><b>部署狀態：</b>可檢查 HTTPS、PWA、快取、本機儲存、Firebase 與房間狀態。</li>
+          <li><b>維護分享：</b>公開狀態報告可一鍵複製，方便朋友遇到問題時回報。</li>
+          <li><b>既有功能：</b>保留觀戰、成就、回放分享、正式版測試清單、玩法教學與 AI 健康檢查。</li>
+          <li><b>快取更新：</b>版本、Service Worker 與公開版文件更新為 V37。</li>
         </ul>
         <div class="button-row dialog-actions">
           <button id="btnOpenTutorialFromRelease" class="ghost" type="button">玩法教學</button>
@@ -492,6 +503,21 @@
         <div class="button-row dialog-actions">
           <button id="btnTutorialEnableHints" class="primary" type="button">開啟玩家提示</button>
           <button id="btnTutorialOpenRules" class="ghost" type="button">玩法摘要</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="publicStatusDialog" class="release-dialog">
+      <div class="dialog-body release-body">
+        <button id="closePublicStatus" class="close" type="button">×</button>
+        <p class="eyebrow">公開版狀態</p>
+        <h2>部署與分享檢查</h2>
+        <p class="hint">這裡可快速確認目前網址、PWA、快取、本機儲存、Firebase 與房間狀態。若朋友遇到問題，可複製這份狀態報告給你排查。</p>
+        <div id="publicStatusList" class="diag-grid"></div>
+        <div class="button-row dialog-actions">
+          <button id="btnCopyPublicStatus" class="ghost" type="button">複製狀態報告</button>
+          <button id="btnCopyPublicLinkInDialog" class="ghost" type="button">複製公開網址</button>
+          <button id="btnClearPwaCachePublic" class="ghost" type="button">清除舊快取</button>
         </div>
       </div>
     </dialog>

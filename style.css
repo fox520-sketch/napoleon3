@@ -2100,6 +2100,32 @@ body[data-theme="twilight"] .replay-tags .tag-warning {
   .tutorial-grid { grid-template-columns: 1fr; }
 }
 
+/* V37: public management and sharing */
+.public-share-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.85rem 0 1.2rem;
+  padding: 1rem;
+  border-radius: 22px;
+  border: 1px solid var(--line);
+  background: linear-gradient(135deg, rgba(46, 196, 182, 0.12), rgba(255, 255, 255, 0.58));
+  box-shadow: 0 14px 34px rgba(18, 87, 113, 0.08);
+}
+.public-share-card h3 { margin-bottom: 0.32rem; }
+.public-share-card .tool-actions { display: flex; flex-wrap: wrap; gap: 0.55rem; justify-content: flex-end; }
+body[data-theme="twilight"] .public-share-card {
+  color: #eef3ff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(196, 205, 236, 0.18);
+}
+@media (max-width: 720px) {
+  .public-share-card { align-items: stretch; flex-direction: column; padding: 0.85rem; }
+  .public-share-card .tool-actions { flex-direction: column; }
+  .public-share-card button { width: 100%; }
+}
+
 /* V36: spectator, achievements, replay sharing */
 .spectator-list {
   display: flex;

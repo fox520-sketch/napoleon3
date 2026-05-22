@@ -40,10 +40,12 @@ async function loadFirebaseSdk() {
   serverTimestamp = dbMod.serverTimestamp;
 }
 
-const APP_VERSION = "AI V36｜觀戰・成就・回放分享";
-const APP_BUILD = "2026-05-21-v36";
+const APP_VERSION = "AI V37｜公開入口・管理面板・維護分享";
+const APP_BUILD = "2026-05-21-v37";
 const ROOM_TTL_MS = 1000 * 60 * 60 * 24;
 const ROOM_STALE_MS = 1000 * 60 * 60 * 12;
+const DEFAULT_PUBLIC_URL = "https://fox520-sketch.github.io/napoleon3/";
+const FOX_HOME_URL = "https://fox520-sketch.github.io/fox/";
 const $ = (id) => document.getElementById(id);
 const SUITS = {
   S: { sym: "♠", name: "黑桃", color: "black", order: 4 },
@@ -86,7 +88,7 @@ const STORAGE = {
   lastRoom: "napoleon.last.room.v1",
   lastRoomAt: "napoleon.last.room.at.v1",
   onboardingSeen: "napoleon.onboarding.seen.v1",
-  releaseChecklist: "napoleon.release.checklist.v36",
+  releaseChecklist: "napoleon.release.checklist.v37",
   achievementsSeen: "napoleon.achievements.seen.v1"
 };
 const THEME_OPTIONS = ["auto", "ocean", "eye-care", "e-ink", "forest", "grassland", "sakura", "twilight"];
@@ -158,6 +160,14 @@ function init() {
   $("btnImportLocalData")?.addEventListener("click", openImportDataDialog);
   $("btnCopyErrorReport")?.addEventListener("click", copyErrorReport);
   $("btnCopySupportBundle")?.addEventListener("click", copySupportBundle);
+  $("btnCopyPublicLink")?.addEventListener("click", copyPublicGameLink);
+  $("btnCopyPublicIntro")?.addEventListener("click", copyPublicIntroText);
+  $("btnOpenPublicStatus")?.addEventListener("click", openPublicStatusDialog);
+  $("btnOpenPublicStatusTop")?.addEventListener("click", openPublicStatusDialog);
+  $("btnCopyPublicLinkInDialog")?.addEventListener("click", copyPublicGameLink);
+  $("btnClearPwaCachePublic")?.addEventListener("click", clearPwaCachesAndReload);
+  $("btnCopyPublicStatus")?.addEventListener("click", copyPublicStatusReport);
+  $("closePublicStatus")?.addEventListener("click", () => $("publicStatusDialog")?.close());
   $("btnCopySupportBundleInDialog")?.addEventListener("click", copySupportBundle);
   $("btnClearPwaCache")?.addEventListener("click", clearPwaCachesAndReload);
   $("btnClearPwaCacheInDialog")?.addEventListener("click", clearPwaCachesAndReload);
@@ -1300,6 +1310,93 @@ function buildSupportBundle() {
 async function copySupportBundle() {
   await copyText(buildSupportBundle(), "已複製維護包");
 }
+
+function getPublicGameUrl() {
+  const isHosted = location.protocol.startsWith("http") && !/localhost|127\.0\.0\.1/.test(location.hostname);
+  if (isHosted) return `${location.origin}${location.pathname}`.replace(/index\.html$/i, "");
+  return DEFAULT_PUBLIC_URL;
+}
+
+function getCurrentPublicStatusRows() {
+  let localStorageOk = false;
+  try {
+    const key = "napoleon.public.status.test";
+    localStorage.setItem(key, "1");
+    localStorage.removeItem(key);
+    localStorageOk = true;
+  } catch {
+    localStorageOk = false;
+  }
+  const httpsOk = location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+  const swOk = "serviceWorker" in navigator;
+  const cacheOk = "caches" in window;
+  const shareOk = "share" in navigator;
+  const installedLike = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+  const firebaseState = appState.connected ? "已連線" : "尚未連線";
+  const roomState = appState.roomCode ? `${appState.roomCode}${appState.spectator ? "（觀戰）" : ""}` : "未在房間";
+  return [
+    { label: "公開網址", ok: true, value: getPublicGameUrl() },
+    { label: "版本", ok: true, value: `${APP_VERSION}（${APP_BUILD}）` },
+    { label: "HTTPS / Pages", ok: httpsOk, value: httpsOk ? "可用" : "建議部署到 GitHub Pages HTTPS" },
+    { label: "PWA Service Worker", ok: swOk, value: swOk ? "瀏覽器支援" : "此瀏覽器不支援" },
+    { label: "快取 API", ok: cacheOk, value: cacheOk ? "瀏覽器支援" : "此瀏覽器不支援" },
+    { label: "本機儲存", ok: localStorageOk, value: localStorageOk ? "可用" : "不可用或被封鎖" },
+    { label: "系統分享", ok: shareOk, value: shareOk ? "可用" : "不可用，會改用複製" },
+    { label: "安裝狀態", ok: true, value: installedLike ? "類 App 模式" : "瀏覽器模式" },
+    { label: "Firebase", ok: appState.connected, value: firebaseState },
+    { label: "房間", ok: true, value: roomState }
+  ];
+}
+
+function renderPublicStatus() {
+  const el = $("publicStatusList");
+  if (!el) return;
+  const rows = getCurrentPublicStatusRows();
+  el.innerHTML = rows.map((row) => `<div class="diag-row ${row.ok ? "ok" : "warn"}"><b>${row.ok ? "✓" : "!"} ${escapeHtml(row.label)}</b><span>${escapeHtml(row.value)}</span></div>`).join("");
+}
+
+function buildPublicStatusReport() {
+  const rows = getCurrentPublicStatusRows();
+  return [
+    "拿破崙與秘書｜公開版狀態報告",
+    `版本：${APP_VERSION}（${APP_BUILD}）`,
+    `時間：${new Date().toLocaleString()}`,
+    ...rows.map((row) => `${row.ok ? "✓" : "!"} ${row.label}：${row.value}`),
+    "",
+    `狐狸網路遊戲之家：${FOX_HOME_URL}`
+  ].join("\n");
+}
+
+async function copyPublicGameLink() {
+  await copyText(getPublicGameUrl(), "已複製公開網址");
+}
+
+async function copyPublicIntroText() {
+  const text = [
+    "🦊 拿破崙與秘書｜台式多人/單人網頁遊戲",
+    "可單人離線對 4 位電腦，也可用 Firebase 房間邀朋友一起玩。",
+    "支援 QR Code、觀戰、玩家提示、牌局回放、AI 健康檢查與 PWA 安裝。",
+    `遊戲網址：${getPublicGameUrl()}`,
+    `狐狸網路遊戲之家：${FOX_HOME_URL}`
+  ].join("\n");
+  try {
+    if (navigator.share) await navigator.share({ title: "拿破崙與秘書", text, url: getPublicGameUrl() });
+    else await copyText(text, "已複製公開介紹文");
+    if (navigator.share) toast("已開啟分享");
+  } catch {
+    await copyText(text, "已複製公開介紹文");
+  }
+}
+
+function openPublicStatusDialog() {
+  renderPublicStatus();
+  $("publicStatusDialog")?.showModal();
+}
+
+async function copyPublicStatusReport() {
+  await copyText(buildPublicStatusReport(), "已複製公開狀態報告");
+}
+
 
 async function clearPwaCachesAndReload() {
   try {
