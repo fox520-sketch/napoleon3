@@ -98,6 +98,27 @@
         </div>
       </div>
 
+      <div class="experience-card" aria-label="手機手感、音效與分享素材">
+        <div>
+          <h3>體驗細節</h3>
+          <p class="hint">手機覺得牌太小時可開大牌模式；也可測試音效/震動，或複製公開分享素材。</p>
+        </div>
+        <div class="experience-controls">
+          <label class="check compact-check"><input id="touchComfortToggle" type="checkbox" /> 手機大牌模式</label>
+          <label class="mini-field sound-profile-field">
+            <span>音效風格</span>
+            <select id="soundProfile">
+              <option value="soft">柔和</option>
+              <option value="classic">經典</option>
+              <option value="arcade">遊戲感</option>
+            </select>
+          </label>
+          <button id="btnTestSound" class="ghost" type="button">測試音效</button>
+          <button id="btnTestVibration" class="ghost" type="button">測試震動</button>
+          <button id="btnOpenShareKit" class="ghost" type="button">分享素材</button>
+        </div>
+      </div>
+
       <div class="quick-start">
         <div>
           <h3>單人離線</h3>
@@ -456,13 +477,13 @@
       <div class="dialog-body release-body">
         <button id="closeReleaseNotes" class="close" type="button">×</button>
         <p class="eyebrow">版本更新</p>
-        <h2>AI V37：公開入口・管理面板・維護分享</h2>
+        <h2>AI V38：手機手感・音效細節・分享素材</h2>
         <ul class="release-list">
-          <li><b>公開版管理：</b>首頁新增公開網址、介紹文分享與公開狀態檢查。</li>
-          <li><b>部署狀態：</b>可檢查 HTTPS、PWA、快取、本機儲存、Firebase 與房間狀態。</li>
-          <li><b>維護分享：</b>公開狀態報告可一鍵複製，方便朋友遇到問題時回報。</li>
-          <li><b>既有功能：</b>保留觀戰、成就、回放分享、正式版測試清單、玩法教學與 AI 健康檢查。</li>
-          <li><b>快取更新：</b>版本、Service Worker 與公開版文件更新為 V37。</li>
+          <li><b>手機手感：</b>新增手機大牌模式，讓手牌與出牌按鈕更容易點選。</li>
+          <li><b>音效細節：</b>新增柔和、經典、遊戲感三種音效風格，並加入音效/震動測試。</li>
+          <li><b>分享素材：</b>新增短版邀請、完整介紹與狐狸首頁素材，可一鍵複製。</li>
+          <li><b>公開版管理：</b>保留公開狀態、維護包、正式版測試清單、玩法教學、觀戰、成就與 AI 健康檢查。</li>
+          <li><b>快取更新：</b>版本、Service Worker 與公開版文件更新為 V38。</li>
         </ul>
         <div class="button-row dialog-actions">
           <button id="btnOpenTutorialFromRelease" class="ghost" type="button">玩法教學</button>
@@ -518,6 +539,31 @@
           <button id="btnCopyPublicStatus" class="ghost" type="button">複製狀態報告</button>
           <button id="btnCopyPublicLinkInDialog" class="ghost" type="button">複製公開網址</button>
           <button id="btnClearPwaCachePublic" class="ghost" type="button">清除舊快取</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="shareKitDialog" class="share-kit-dialog">
+      <div class="dialog-body share-kit-body">
+        <button id="closeShareKit" class="close" type="button">×</button>
+        <p class="eyebrow">分享素材</p>
+        <h2>複製給朋友或放到狐狸首頁</h2>
+        <div class="share-kit-grid">
+          <article>
+            <h3>短版邀請</h3>
+            <textarea id="shareKitShort" readonly></textarea>
+            <button class="ghost" type="button" data-share-copy="short">複製短版</button>
+          </article>
+          <article>
+            <h3>完整介紹</h3>
+            <textarea id="shareKitLong" readonly></textarea>
+            <button class="ghost" type="button" data-share-copy="long">複製介紹</button>
+          </article>
+          <article>
+            <h3>狐狸首頁素材</h3>
+            <textarea id="shareKitFox" readonly></textarea>
+            <button class="ghost" type="button" data-share-copy="fox">複製 HTML</button>
+          </article>
         </div>
       </div>
     </dialog>

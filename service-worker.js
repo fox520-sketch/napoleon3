@@ -1,4 +1,4 @@
-const CACHE_NAME = "napoleon-secretary-v37-public-management-share";
+const CACHE_NAME = "napoleon-secretary-v38-touch-share";
 const ASSETS = [
   "./",
   "./index.html",

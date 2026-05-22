@@ -40,8 +40,8 @@ async function loadFirebaseSdk() {
   serverTimestamp = dbMod.serverTimestamp;
 }
 
-const APP_VERSION = "AI V37｜公開入口・管理面板・維護分享";
-const APP_BUILD = "2026-05-21-v37";
+const APP_VERSION = "AI V38｜手機手感・音效細節・分享素材";
+const APP_BUILD = "2026-05-22-v38";
 const ROOM_TTL_MS = 1000 * 60 * 60 * 24;
 const ROOM_STALE_MS = 1000 * 60 * 60 * 12;
 const DEFAULT_PUBLIC_URL = "https://fox520-sketch.github.io/napoleon3/";
@@ -88,8 +88,10 @@ const STORAGE = {
   lastRoom: "napoleon.last.room.v1",
   lastRoomAt: "napoleon.last.room.at.v1",
   onboardingSeen: "napoleon.onboarding.seen.v1",
-  releaseChecklist: "napoleon.release.checklist.v37",
-  achievementsSeen: "napoleon.achievements.seen.v1"
+  releaseChecklist: "napoleon.release.checklist.v38",
+  achievementsSeen: "napoleon.achievements.seen.v1",
+  touchComfort: "napoleon.touch.comfort.v1",
+  soundProfile: "napoleon.sound.profile.v1"
 };
 const THEME_OPTIONS = ["auto", "ocean", "eye-care", "e-ink", "forest", "grassland", "sakura", "twilight"];
 const THEME_PALETTE = THEME_OPTIONS.filter((theme) => theme !== "auto");
@@ -223,7 +225,15 @@ function init() {
   applyPlayerHintsVisible(getPlayerHintsVisible());
   $("soundToggle")?.addEventListener("change", (event) => setSoundEnabled(event.target.checked));
   $("vibrationToggle")?.addEventListener("change", (event) => setVibrationEnabled(event.target.checked));
+  $("touchComfortToggle")?.addEventListener("change", (event) => setTouchComfortEnabled(event.target.checked));
+  $("soundProfile")?.addEventListener("change", (event) => setSoundProfile(event.target.value));
+  $("btnTestSound")?.addEventListener("click", () => { setSoundEnabled(true); playSfx("turn"); toast("音效測試"); });
+  $("btnTestVibration")?.addEventListener("click", () => { setVibrationEnabled(true); vibrate([24, 35, 24]); toast("震動測試"); });
+  $("btnOpenShareKit")?.addEventListener("click", openShareKitDialog);
+  $("closeShareKit")?.addEventListener("click", () => $("shareKitDialog")?.close());
+  document.querySelectorAll("[data-share-copy]").forEach((btn) => btn.addEventListener("click", () => copyShareKitText(btn.dataset.shareCopy)));
   applyFeedbackSettings();
+  applyTouchComfort();
   $("closeReplay")?.addEventListener("click", () => $("replayDialog")?.close());
   $("btnShareReplay")?.addEventListener("click", shareReplay);
   $("resultReplay")?.addEventListener("click", () => openReplayDialog(appState.room?.game));
@@ -725,6 +735,36 @@ function setVibrationEnabled(enabled) {
 function applyFeedbackSettings() {
   if ($("soundToggle")) $("soundToggle").checked = isSoundEnabled();
   if ($("vibrationToggle")) $("vibrationToggle").checked = isVibrationEnabled();
+  if ($("soundProfile")) $("soundProfile").value = getSoundProfile();
+}
+
+function getSoundProfile() {
+  const profile = localStorage.getItem(STORAGE.soundProfile) || "soft";
+  return ["soft", "classic", "arcade"].includes(profile) ? profile : "soft";
+}
+
+function setSoundProfile(profile) {
+  const safe = ["soft", "classic", "arcade"].includes(profile) ? profile : "soft";
+  localStorage.setItem(STORAGE.soundProfile, safe);
+  applyFeedbackSettings();
+  if (isSoundEnabled()) playSfx("click");
+  toast(`音效風格：${safe === "soft" ? "柔和" : safe === "classic" ? "經典" : "遊戲感"}`);
+}
+
+function isTouchComfortEnabled() {
+  return localStorage.getItem(STORAGE.touchComfort) === "1";
+}
+
+function setTouchComfortEnabled(enabled) {
+  localStorage.setItem(STORAGE.touchComfort, enabled ? "1" : "0");
+  applyTouchComfort();
+  toast(enabled ? "已開啟手機大牌模式" : "已關閉手機大牌模式");
+}
+
+function applyTouchComfort() {
+  const enabled = isTouchComfortEnabled();
+  document.body.classList.toggle("touch-comfort", enabled);
+  if ($("touchComfortToggle")) $("touchComfortToggle").checked = enabled;
 }
 
 function playSfx(type = "click") {
@@ -737,12 +777,14 @@ function playSfx(type = "click") {
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    const freq = type === "turn" ? 880 : type === "win" ? 1046 : type === "lose" ? 196 : 520;
-    osc.type = type === "lose" ? "sawtooth" : "sine";
+    const profile = getSoundProfile();
+    const base = type === "turn" ? 880 : type === "win" ? 1046 : type === "lose" ? 196 : 520;
+    const freq = profile === "arcade" ? base * 1.18 : profile === "classic" ? base * 0.94 : base;
+    osc.type = type === "lose" ? "sawtooth" : profile === "arcade" ? "square" : "sine";
     osc.frequency.setValueAtTime(freq, now);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(type === "turn" ? 0.045 : 0.035, now + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + (type === "turn" ? 0.18 : 0.12));
+    gain.gain.exponentialRampToValueAtTime(profile === "soft" ? 0.028 : type === "turn" ? 0.052 : 0.04, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + (profile === "arcade" ? 0.16 : type === "turn" ? 0.2 : 0.14));
     osc.connect(gain).connect(ctx.destination);
     osc.start(now);
     osc.stop(now + 0.22);
@@ -934,6 +976,8 @@ function collectLocalData() {
       playerHints: getPlayerHintsVisible(),
       sound: isSoundEnabled(),
       vibration: isVibrationEnabled(),
+      touchComfort: isTouchComfortEnabled(),
+      soundProfile: getSoundProfile(),
       playerName: localStorage.getItem(STORAGE.name) || ""
     },
     stats: loadLocalStats(),
@@ -968,12 +1012,13 @@ async function exportLocalData() {
 function resetLocalData() {
   const ok = window.confirm("確定要清除本機統計、偏好、上次房號與錯誤紀錄？不會刪除 Firebase 房間資料。");
   if (!ok) return;
-  for (const key of [STORAGE.localStats, STORAGE.errorLog, STORAGE.lastRoom, STORAGE.lastRoomAt, STORAGE.logVisible, STORAGE.playerHints, STORAGE.sound, STORAGE.vibration, STORAGE.theme, STORAGE.onboardingSeen]) {
+  for (const key of [STORAGE.localStats, STORAGE.errorLog, STORAGE.lastRoom, STORAGE.lastRoomAt, STORAGE.logVisible, STORAGE.playerHints, STORAGE.sound, STORAGE.vibration, STORAGE.touchComfort, STORAGE.soundProfile, STORAGE.theme, STORAGE.onboardingSeen]) {
     localStorage.removeItem(key);
   }
   appState.recordedRoundKeys.clear();
   applyPlayerHintsVisible(false);
   applyFeedbackSettings();
+  applyTouchComfort();
   renderLocalStatsSummary();
   toast("已重設本機資料");
 }
@@ -1134,6 +1179,8 @@ function restoreLocalDataFromDialog() {
   if (typeof settings.playerHints === "boolean") localStorage.setItem(STORAGE.playerHints, settings.playerHints ? "1" : "0");
   if (typeof settings.sound === "boolean") localStorage.setItem(STORAGE.sound, settings.sound ? "1" : "0");
   if (typeof settings.vibration === "boolean") localStorage.setItem(STORAGE.vibration, settings.vibration ? "1" : "0");
+  if (typeof settings.touchComfort === "boolean") localStorage.setItem(STORAGE.touchComfort, settings.touchComfort ? "1" : "0");
+  if (settings.soundProfile) localStorage.setItem(STORAGE.soundProfile, ["soft", "classic", "arcade"].includes(settings.soundProfile) ? settings.soundProfile : "soft");
   if (settings.playerName) localStorage.setItem(STORAGE.name, String(settings.playerName).slice(0, 12));
   if (data.stats && typeof data.stats === "object") saveLocalStats({ ...getEmptyLocalStats(), ...data.stats });
   if (Array.isArray(data.errors)) saveErrorLog(data.errors);
@@ -1141,6 +1188,7 @@ function restoreLocalDataFromDialog() {
   applyTheme(loadTheme());
   applyPlayerHintsVisible(getPlayerHintsVisible());
   applyFeedbackSettings();
+  applyTouchComfort();
   renderLocalStatsSummary();
   const name = localStorage.getItem(STORAGE.name);
   if (name && $("playerName")) $("playerName").value = name;
@@ -1268,6 +1316,41 @@ function scrollToMultiplayerStart() {
   toast("已跳到多人設定");
 }
 
+
+function openShareKitDialog() {
+  const dialog = $("shareKitDialog");
+  if (!dialog) return;
+  for (const kind of ["short", "long", "fox"] ) {
+    const el = $(`shareKit${kind[0].toUpperCase()}${kind.slice(1)}`);
+    if (el) el.value = buildShareKitText(kind);
+  }
+  try { dialog.showModal(); }
+  catch { dialog.setAttribute("open", ""); }
+}
+
+function buildShareKitText(kind = "short") {
+  const url = getPublicGameUrl();
+  if (kind === "long") {
+    return [
+      "拿破崙與秘書｜台式玩法網頁版",
+      "",
+      "支援單人離線、Firebase 多人房間、QR Code 邀請、觀戰、牌局回放、玩家提示、AI 健康檢查與多種主題。",
+      "手機可安裝成 PWA，也能從狐狸網路遊戲之家進入。",
+      "",
+      `遊戲網址：${url}`,
+      `狐狸網路遊戲之家：${FOX_HOME_URL}`
+    ].join("\n");
+  }
+  if (kind === "fox") {
+    return `<a href="${url}">拿破崙與秘書</a>｜台式拿破崙與秘書，支援單人離線、多人房間、QR Code 邀請與牌局回放。`;
+  }
+  return `來玩拿破崙與秘書：${url}`;
+}
+
+async function copyShareKitText(kind) {
+  await copyText(buildShareKitText(kind), kind === "fox" ? "已複製首頁素材" : "已複製分享文字");
+}
+
 function buildSupportBundle() {
   const stats = loadLocalStats();
   const errors = loadErrorLog().slice(0, 8);
@@ -1283,6 +1366,8 @@ function buildSupportBundle() {
     playerHints: getPlayerHintsVisible(),
     sound: isSoundEnabled(),
     vibration: isVibrationEnabled(),
+    touchComfort: isTouchComfortEnabled(),
+    soundProfile: getSoundProfile(),
     online: navigator.onLine,
     firebaseConnected: appState.connected,
     room: appState.roomCode ? {
