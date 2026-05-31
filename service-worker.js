@@ -1,4 +1,4 @@
-const CACHE_NAME = "napoleon-secretary-v40-nap-team-heads";
+const CACHE_NAME = "napoleon-secretary-v41-display-themes";
 const ASSETS = [
   "./",
   "./index.html",

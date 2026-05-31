@@ -40,8 +40,8 @@ async function loadFirebaseSdk() {
   serverTimestamp = dbMod.serverTimestamp;
 }
 
-const APP_VERSION = "AI V40｜拿破崙軍頭數顯示修正";
-const APP_BUILD = "2026-05-22-v40-nap-team-heads";
+const APP_VERSION = "AI V41｜新增深色與黑白顯示風格";
+const APP_BUILD = "2026-05-31-v41-display-themes";
 const ROOM_TTL_MS = 1000 * 60 * 60 * 24;
 const ROOM_STALE_MS = 1000 * 60 * 60 * 12;
 const DEFAULT_PUBLIC_URL = "https://fox520-sketch.github.io/napoleon3/";
@@ -93,7 +93,7 @@ const STORAGE = {
   touchComfort: "napoleon.touch.comfort.v1",
   soundProfile: "napoleon.sound.profile.v1"
 };
-const THEME_OPTIONS = ["auto", "ocean", "eye-care", "e-ink", "forest", "grassland", "sakura", "twilight"];
+const THEME_OPTIONS = ["auto", "ocean", "eye-care", "dark", "e-ink-bw", "e-ink", "forest", "grassland", "sakura", "twilight"];
 const THEME_PALETTE = THEME_OPTIONS.filter((theme) => theme !== "auto");
 const SETTING_PRESETS = {
   standard: { label: "標準台式", difficulty: 12, aiStyle: "expert", buriedMode: "addContract", leadMode: "next", trumpMode: "suitOnly", jokerLowLast3: true, summonJokers: true, allowSelfSecretary: false, showAiThoughts: true, balanceTarget: "normal" },
@@ -270,7 +270,7 @@ function resolveTheme(theme) {
   const safeTheme = THEME_OPTIONS.includes(theme) ? theme : "ocean";
   if (safeTheme !== "auto") return safeTheme;
   const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-  return prefersDark ? "twilight" : "ocean";
+  return prefersDark ? "dark" : "ocean";
 }
 
 function applyTheme(theme, persist = false) {
