@@ -2517,3 +2517,127 @@ body[data-theme="e-ink-bw"] .table::after,
 body[data-theme="e-ink-bw"] body::before {
   display: none;
 }
+
+
+/* V42: contrast and readability fixes for dark / e-ink themes */
+body[data-theme="dark"] button:disabled {
+  opacity: 0.72;
+}
+
+body[data-theme="dark"] button:not(.primary):not(.card-btn):not(.play-card):not(.quick-mode) {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid var(--line);
+}
+
+body[data-theme="dark"] .ghost:hover:not(:disabled),
+body[data-theme="dark"] .top-check:hover,
+body[data-theme="dark"] button:not(.primary):not(.card-btn):not(.play-card):not(.quick-mode):hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+body[data-theme="dark"] .pill {
+  color: #eaf6ff;
+  background: rgba(125, 211, 252, 0.14);
+  border-color: rgba(125, 211, 252, 0.24);
+}
+
+body[data-theme="dark"] .quick-mode,
+body[data-theme="dark"] .checklist-group,
+body[data-theme="dark"] .tutorial-grid article,
+body[data-theme="dark"] .spectator-list,
+body[data-theme="dark"] .spectator-list span,
+body[data-theme="dark"] .spectator-hand-note,
+body[data-theme="dark"] .achievement,
+body[data-theme="dark"] .replay-play,
+body[data-theme="dark"] .replay-play small {
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+body[data-theme="dark"] .quick-mode {
+  background: linear-gradient(180deg, rgba(17, 24, 39, 0.94), rgba(15, 23, 42, 0.90));
+  border-color: rgba(148, 163, 184, 0.28);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
+}
+body[data-theme="dark"] .quick-mode:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.96), rgba(15, 23, 42, 0.94));
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.44);
+}
+body[data-theme="dark"] .quick-mode b {
+  color: #f8fbff;
+}
+body[data-theme="dark"] .quick-mode span {
+  color: #cfdbef;
+}
+
+body[data-theme="dark"] .checklist-group,
+body[data-theme="dark"] .tutorial-grid article,
+body[data-theme="dark"] .spectator-list,
+body[data-theme="dark"] .spectator-hand-note,
+body[data-theme="dark"] .achievement,
+body[data-theme="dark"] .replay-play,
+body[data-theme="dark"] .replay-play small {
+  background: rgba(255, 255, 255, 0.08);
+}
+body[data-theme="dark"] .checklist-item,
+body[data-theme="dark"] .tutorial-grid p,
+body[data-theme="dark"] .achievement span,
+body[data-theme="dark"] .spectator-hand-note,
+body[data-theme="dark"] .replay-play small,
+body[data-theme="dark"] .release-body,
+body[data-theme="dark"] .release-list li,
+body[data-theme="dark"] .public-share-card p,
+body[data-theme="dark"] .experience-card p,
+body[data-theme="dark"] .ai-test-status,
+body[data-theme="dark"] .diagnostic-status,
+body[data-theme="dark"] .ai-health-grid span,
+body[data-theme="dark"] .ai-health-notes {
+  color: #cfdbef;
+}
+body[data-theme="dark"] .achievement b,
+body[data-theme="dark"] .spectator-list b,
+body[data-theme="dark"] .checklist-group h3,
+body[data-theme="dark"] .tutorial-grid h3,
+body[data-theme="dark"] .public-start-head h3,
+body[data-theme="dark"] .public-share-card h3,
+body[data-theme="dark"] .experience-card h3,
+body[data-theme="dark"] .ai-test-card h3,
+body[data-theme="dark"] .tool-card h3 {
+  color: #f8fbff;
+}
+body[data-theme="dark"] .achievement.unlocked {
+  background: rgba(251, 191, 36, 0.16);
+  border-color: rgba(251, 191, 36, 0.24);
+}
+body[data-theme="dark"] .replay-play.winner {
+  background: rgba(251, 191, 36, 0.16);
+  border-color: rgba(251, 191, 36, 0.24);
+}
+body[data-theme="dark"] .replay-play b.black,
+body[data-theme="dark"] .replay-play b.red,
+body[data-theme="dark"] .replay-play b.joker {
+  color: #f8fbff;
+}
+body[data-theme="dark"] input[type="checkbox"],
+body[data-theme="dark"] input[type="radio"] {
+  accent-color: #7dd3fc;
+}
+
+body[data-theme="e-ink-bw"] button:disabled {
+  opacity: 0.88;
+}
+body[data-theme="e-ink-bw"] .quick-mode span,
+body[data-theme="e-ink-bw"] .tutorial-grid p,
+body[data-theme="e-ink-bw"] .achievement span,
+body[data-theme="e-ink-bw"] .spectator-hand-note,
+body[data-theme="e-ink-bw"] .release-list li,
+body[data-theme="e-ink-bw"] .public-share-card p,
+body[data-theme="e-ink-bw"] .experience-card p,
+body[data-theme="e-ink-bw"] .ai-test-status,
+body[data-theme="e-ink-bw"] .diagnostic-status,
+body[data-theme="e-ink-bw"] .ai-health-grid span,
+body[data-theme="e-ink-bw"] .ai-health-notes,
+body[data-theme="e-ink-bw"] .replay-play small {
+  color: #000000 !important;
+}
