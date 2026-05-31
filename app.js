@@ -40,7 +40,7 @@ async function loadFirebaseSdk() {
   serverTimestamp = dbMod.serverTimestamp;
 }
 
-const APP_VERSION = "AI V42｜修正深色／黑白主題按鍵對比";
+const APP_VERSION = "AI V43｜UI 對比全面補強";
 const APP_BUILD = "2026-05-31-v41-display-themes";
 const ROOM_TTL_MS = 1000 * 60 * 60 * 24;
 const ROOM_STALE_MS = 1000 * 60 * 60 * 12;

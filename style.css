@@ -2641,3 +2641,170 @@ body[data-theme="e-ink-bw"] .ai-health-notes,
 body[data-theme="e-ink-bw"] .replay-play small {
   color: #000000 !important;
 }
+
+
+/* V43: UI contrast hardening for dark and e-ink themes */
+body[data-theme="dark"] {
+  --ink: #f8fbff;
+  --muted: #d6deeb;
+  --line: rgba(226, 232, 240, 0.24);
+}
+
+body[data-theme="dark"] select,
+body[data-theme="dark"] .theme-picker select,
+body[data-theme="dark"] .mini-field select {
+  color: #f8fbff;
+  background-color: rgba(255, 255, 255, 0.11);
+  border-color: rgba(226, 232, 240, 0.30);
+}
+
+body[data-theme="dark"] select option {
+  color: #111827;
+  background: #ffffff;
+}
+
+body[data-theme="dark"] select option:disabled {
+  color: #4b5563;
+}
+
+body[data-theme="dark"] select:focus,
+body[data-theme="dark"] .theme-picker select:focus,
+body[data-theme="dark"] .mini-field select:focus {
+  border-color: rgba(125, 211, 252, 0.85);
+  box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.18);
+}
+
+body[data-theme="dark"] .subtitle,
+body[data-theme="dark"] .hint,
+body[data-theme="dark"] small,
+body[data-theme="dark"] .version-footer,
+body[data-theme="dark"] .log-summary,
+body[data-theme="dark"] .invite-url,
+body[data-theme="dark"] .ai-test-status,
+body[data-theme="dark"] .diagnostic-status,
+body[data-theme="dark"] .ai-health-grid span,
+body[data-theme="dark"] .ai-health-notes,
+body[data-theme="dark"] .tutorial-grid p,
+body[data-theme="dark"] .release-list li,
+body[data-theme="dark"] .public-share-card p,
+body[data-theme="dark"] .experience-card p,
+body[data-theme="dark"] .quick-mode span,
+body[data-theme="dark"] .replay-trick p,
+body[data-theme="dark"] .diag-row span,
+body[data-theme="dark"] .achievement span,
+body[data-theme="dark"] .spectator-hand-note {
+  color: #d6deeb;
+}
+
+body[data-theme="dark"] button:not(.primary):not(.card-btn):not(.play-card):not(.quick-mode),
+body[data-theme="dark"] .ghost,
+body[data-theme="dark"] .top-check {
+  color: #f8fbff;
+  background: rgba(255, 255, 255, 0.11);
+  border: 1px solid rgba(226, 232, 240, 0.26);
+}
+
+body[data-theme="dark"] button:not(.primary):not(.card-btn):not(.play-card):not(.quick-mode):hover:not(:disabled),
+body[data-theme="dark"] .ghost:hover:not(:disabled),
+body[data-theme="dark"] .top-check:hover {
+  background: rgba(255, 255, 255, 0.17);
+  border-color: rgba(226, 232, 240, 0.38);
+}
+
+body[data-theme="dark"] button:disabled {
+  opacity: 0.76;
+  filter: grayscale(0.15);
+}
+
+body[data-theme="dark"] .quick-mode {
+  color: #f8fbff;
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.96), rgba(15, 23, 42, 0.94));
+  border-color: rgba(148, 163, 184, 0.34);
+}
+
+body[data-theme="dark"] .quick-mode b {
+  color: #ffffff;
+}
+
+body[data-theme="dark"] .quick-mode span {
+  color: #d6deeb;
+}
+
+body[data-theme="dark"] .pill,
+body[data-theme="dark"] .tag,
+body[data-theme="dark"] .lead-badge {
+  border-color: rgba(226, 232, 240, 0.28);
+}
+
+body[data-theme="dark"] .pill,
+body[data-theme="dark"] .tag {
+  color: #f8fbff;
+  background: rgba(125, 211, 252, 0.13);
+}
+
+body[data-theme="dark"] .tag.danger {
+  color: #ffe4e6;
+  background: rgba(251, 113, 133, 0.18);
+}
+
+body[data-theme="dark"] .tag.gold,
+body[data-theme="dark"] .lead-badge {
+  color: #111827;
+  background: #fde68a;
+}
+
+body[data-theme="dark"] .checklist-group,
+body[data-theme="dark"] .tutorial-grid article,
+body[data-theme="dark"] .replay-trick,
+body[data-theme="dark"] .diag-row,
+body[data-theme="dark"] .achievement,
+body[data-theme="dark"] .spectator-list,
+body[data-theme="dark"] .spectator-hand-note {
+  color: #f8fbff;
+  background: rgba(255, 255, 255, 0.085);
+  border-color: rgba(226, 232, 240, 0.22);
+}
+
+body[data-theme="dark"] .checklist-item,
+body[data-theme="dark"] .tutorial-grid p,
+body[data-theme="dark"] .replay-trick p,
+body[data-theme="dark"] .diag-row span,
+body[data-theme="dark"] .achievement span,
+body[data-theme="dark"] .spectator-hand-note {
+  color: #d6deeb;
+}
+
+body[data-theme="dark"] .invite-url {
+  color: #d6deeb;
+}
+
+body[data-theme="dark"] .qr-code {
+  background: #ffffff;
+  border-color: rgba(226, 232, 240, 0.34);
+}
+
+body[data-theme="dark"] .player-tips,
+body[data-theme="dark"] .update-banner {
+  color: #f8fbff;
+  background: rgba(15, 23, 42, 0.96);
+  border-color: rgba(226, 232, 240, 0.24);
+}
+
+body[data-theme="dark"] .player-tips li,
+body[data-theme="dark"] .update-banner small {
+  color: #d6deeb;
+}
+
+body[data-theme="e-ink-bw"] select option {
+  color: #000000;
+  background: #ffffff;
+}
+
+body[data-theme="e-ink-bw"] select option:disabled {
+  color: #555555;
+}
+
+body[data-theme="e-ink-bw"] button:disabled {
+  opacity: 0.9;
+  border-style: dashed !important;
+}
